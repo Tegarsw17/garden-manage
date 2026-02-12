@@ -255,6 +255,15 @@ export async function createPlantType(name: string): Promise<PlantType | null> {
 // PLANTS CRUD
 // =====================================================
 
+// Helper to extract name from Supabase JOIN response (could be array or object)
+const extractName = (value: any): string | undefined => {
+  if (!value) return undefined
+  if (Array.isArray(value)) {
+    return value[0]?.name
+  }
+  return value.name
+}
+
 export async function getPlants(): Promise<Plant[]> {
   const { data, error } = await supabase
     .from('plants')
@@ -280,8 +289,8 @@ export async function getPlants(): Promise<Plant[]> {
     gardenId: item.garden_id,
     plantTypeId: item.plant_type_id,
     plantName: item.plant_name,
-    gardenName: item.gardens.name,
-    plantTypeName: item.plant_types.name,
+    gardenName: extractName(item.gardens),
+    plantTypeName: extractName(item.plant_types),
     created_at: item.created_at,
   }))
 }
@@ -311,8 +320,8 @@ export async function getPlantsByGarden(gardenId: number): Promise<Plant[]> {
     gardenId: item.garden_id,
     plantTypeId: item.plant_type_id,
     plantName: item.plant_name,
-    gardenName: item.gardens.name,
-    plantTypeName: item.plant_types.name,
+    gardenName: extractName(item.gardens),
+    plantTypeName: extractName(item.plant_types),
     created_at: item.created_at,
   }))
 }
@@ -347,8 +356,8 @@ export async function createPlant(plant: Omit<Plant, 'id' | 'gardenName' | 'plan
       gardenId: item.garden_id,
       plantTypeId: item.plant_type_id,
       plantName: item.plant_name,
-      gardenName: item.gardens.name,
-      plantTypeName: item.plant_types.name,
+      gardenName: extractName(item.gardens),
+      plantTypeName: extractName(item.plant_types),
       created_at: item.created_at,
     }
   }
@@ -388,8 +397,8 @@ export async function updatePlant(id: number, plant: Partial<Omit<Plant, 'id' | 
       gardenId: item.garden_id,
       plantTypeId: item.plant_type_id,
       plantName: item.plant_name,
-      gardenName: item.gardens.name,
-      plantTypeName: item.plant_types.name,
+      gardenName: extractName(item.gardens),
+      plantTypeName: extractName(item.plant_types),
       created_at: item.created_at,
     }
   }
