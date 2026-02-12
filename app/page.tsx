@@ -1,8 +1,8 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, MouseEvent } from 'react'
 import { supabase, type GardenUpdate, type Garden, type Plant, getGardens, getPlants, getPlantsByGarden, getUpdates, createUpdate, updateUpdate, deleteUpdate, uploadMedia } from '@/lib/supabase'
-import { Share2, Edit, Trash2, Plus, X, Mic, Camera, Leaf } from 'lucide-react'
+import { Share2, Edit, Trash2, Plus, X, Mic, Camera, Leaf, MoreVertical } from 'lucide-react'
 import Link from 'next/link'
 
 declare global {
@@ -27,6 +27,9 @@ export default function Home() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [isLoading, setIsLoading] = useState(false)
   const [toast, setToast] = useState<{ show: boolean; message: string }>({ show: false, message: '' })
+  const [openMenuId, setOpenMenuId] = useState<number | null>(null)
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
+  const [selectedUpdate, setSelectedUpdate] = useState<GardenUpdate | null>(null)
 
   // Form state
   const [formData, setFormData] = useState({
@@ -74,6 +77,18 @@ export default function Home() {
       loadPlantsForGarden(activeGarden.id!)
     }
   }, [activeGarden])
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement
+      if (!target.closest('.menu-container')) {
+        setOpenMenuId(null)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside as any)
+    return () => document.removeEventListener('mousedown', handleClickOutside as any)
+  }, [])
 
   const loadGardensAndPlants = async () => {
     const gardensData = await getGardens()
@@ -254,10 +269,29 @@ export default function Home() {
     }
   }
 
+  // Detail modal handlers
+  const openDetailModal = (update: GardenUpdate, e?: React.MouseEvent) => {
+    // Prevent opening if clicking on action buttons
+    if (e) {
+      const target = e.target as HTMLElement
+      if (target.closest('button') || target.closest('.menu-container') || target.closest('input')) {
+        return
+      }
+    }
+    setSelectedUpdate(update)
+    setIsDetailModalOpen(true)
+  }
+
+  const closeDetailModal = () => {
+    setIsDetailModalOpen(false)
+    setSelectedUpdate(null)
+  }
+
   // Selection mode
   const toggleSelectMode = () => {
     setIsSelecting(!isSelecting)
     setSelectedIds(new Set())
+    setOpenMenuId(null) // Close any open menu
   }
 
   const toggleSelection = (id: number) => {
@@ -352,6 +386,12 @@ export default function Home() {
     setTimeout(() => setToast({ show: false, message: '' }), 3000)
   }
 
+  // Helper function to truncate text
+  const truncateText = (text: string, maxLength: number = 50) => {
+    if (text.length <= maxLength) return text
+    return text.substring(0, maxLength) + '...'
+  }
+
   // Helper function to render media
   const renderMedia = (media: string, mediaType?: string) => {
     const isVideo = mediaType?.startsWith('video')
@@ -441,12 +481,16 @@ export default function Home() {
               {updates.map(update => (
                 <div
                   key={update.id}
-                  className={`bg-white rounded-2xl p-5 shadow-md relative border-l-4 transition-all ${isSelecting ? 'pl-8' : ''} ${selectedIds.has(update.id!) ? 'bg-green-50 border-l-green-700' : 'border-l-transparent'}`}
+                  onClick={(e) => openDetailModal(update, e)}
+                  className={`bg-white rounded-2xl p-5 shadow-md relative border-l-4 transition-all cursor-pointer hover:shadow-lg ${isSelecting ? 'pl-8' : ''} ${selectedIds.has(update.id!) ? 'bg-green-50 border-l-green-700' : 'border-l-transparent'}`}
                 >
                   {isSelecting && (
                     <div
                       className="absolute left-2 top-5 cursor-pointer"
-                      onClick={() => toggleSelection(update.id!)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        toggleSelection(update.id!)
+                      }}
                     >
                       <input
                         type="checkbox"
@@ -457,15 +501,16 @@ export default function Home() {
                     </div>
                   )}
                   <div className="flex justify-between items-start mb-4">
-                    <div>
+                    <div className="flex-1">
                       <span className="inline-block bg-green-100 text-green-900 font-bold px-3 py-1.5 rounded-lg text-sm">
                         {update.type}
                       </span>
                       <p className="text-sm text-gray-500 mt-2">
-                        <strong>{update.garden}</strong> • {update.plantId}
+                         {update.plantId}
                       </p>
                     </div>
-                    <div className="flex gap-2">
+                    {/* Desktop: Show icons directly */}
+                    <div className="hidden md:flex gap-2" onClick={(e) => e.stopPropagation()}>
                       <button
                         onClick={() => shareSingle(update)}
                         className="p-1.5 opacity-60 hover:opacity-100 hover:scale-110 transition-all text-green-600"
@@ -488,9 +533,60 @@ export default function Home() {
                         <Trash2 size={20} />
                       </button>
                     </div>
+                    {/* Mobile: Hamburger menu */}
+                    <div className="md:hidden relative menu-container" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        onClick={() => setOpenMenuId(openMenuId === update.id ? null : update.id!)}
+                        className="p-1.5 text-gray-600 hover:text-gray-900 transition-all"
+                        title="More options"
+                      >
+                        <MoreVertical size={20} />
+                      </button>
+                      {openMenuId === update.id && (
+                        <div className="absolute right-0 top-8 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-10 min-w-[140px]">
+                          <button
+                            onClick={() => {
+                              shareSingle(update)
+                              setOpenMenuId(null)
+                            }}
+                            className="w-full px-4 py-2.5 text-left text-sm text-green-700 hover:bg-green-50 flex items-center gap-3 transition-colors"
+                          >
+                            <Share2 size={16} />
+                            Share
+                          </button>
+                          <button
+                            onClick={() => {
+                              handleEdit(update)
+                              setOpenMenuId(null)
+                            }}
+                            className="w-full px-4 py-2.5 text-left text-sm text-blue-700 hover:bg-blue-50 flex items-center gap-3 transition-colors"
+                          >
+                            <Edit size={16} />
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => {
+                              handleDelete(update.id!)
+                              setOpenMenuId(null)
+                            }}
+                            className="w-full px-4 py-2.5 text-left text-sm text-red-700 hover:bg-red-50 flex items-center gap-3 transition-colors"
+                          >
+                            <Trash2 size={16} />
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <p className="text-gray-800 whitespace-pre-wrap mb-4">{update.desc}</p>
-                  {update.media && renderMedia(update.media, update.mediaType)}
+                  <p className="text-gray-800 whitespace-pre-wrap mb-4">{truncateText(update.desc, 25)}</p>
+                  {update.media && (
+                    <div className="relative mb-4" onClick={(e) => openDetailModal(update, e)}>
+                      {renderMedia(update.media, update.mediaType)}
+                      <div className="absolute inset-0 bg-black/10 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <span className="bg-white/90 text-gray-800 px-3 py-1 rounded-full text-sm font-medium">Tap to view</span>
+                      </div>
+                    </div>
+                  )}
                   <div className="text-xs text-gray-400 mt-3 pt-3 border-t border-gray-100">
                     📅 {update.date}
                   </div>
@@ -673,6 +769,87 @@ export default function Home() {
                     Save & Next
                   </button>
                 )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Detail Modal */}
+      {isDetailModalOpen && selectedUpdate && (
+        <div
+          className="fixed inset-0 bg-black/50 z-[300] flex items-end justify-center p-0 md:items-center md:p-4"
+          onClick={(e) => e.target === e.currentTarget && closeDetailModal()}
+        >
+          <div className="bg-white w-full max-w-2xl rounded-t-2xl md:rounded-2xl p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6 pb-4 border-b">
+              <div>
+                <span className="inline-block bg-green-100 text-green-900 font-bold px-3 py-1.5 rounded-lg text-sm mb-2">
+                  {selectedUpdate.type}
+                </span>
+                <h2 className="text-xl text-black font-semibold">{selectedUpdate.plantId}</h2>
+              </div>
+              <button
+                onClick={closeDetailModal}
+                className="text-gray-500 hover:text-red-600 text-3xl transition-colors"
+              >
+                <X size={28} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Garden info */}
+              <div className="text-sm text-gray-500 pb-3 border-b border-gray-100">
+                <strong>{selectedUpdate.garden}</strong> • 📅 {selectedUpdate.date}
+              </div>
+
+              {/* Media */}
+              {selectedUpdate.media && (
+                <div className="rounded-lg overflow-hidden">
+                  {renderMedia(selectedUpdate.media, selectedUpdate.mediaType)}
+                </div>
+              )}
+
+              {/* Description */}
+              <div>
+                <h3 className="text-sm font-bold text-green-700 uppercase tracking-wide mb-2">Description</h3>
+                <p className="text-gray-800 whitespace-pre-wrap text-base leading-relaxed bg-gray-50 p-4 rounded-lg">
+                  {selectedUpdate.desc}
+                </p>
+              </div>
+
+              {/* Action buttons */}
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={() => {
+                    shareSingle(selectedUpdate)
+                    closeDetailModal()
+                  }}
+                  className="flex-1 py-3 bg-green-600 text-white rounded-lg font-semibold flex items-center justify-center gap-2 hover:bg-green-700 transition-all"
+                >
+                  <Share2 size={20} />
+                  <div className='md:block hidden'>Share to WhatsApp</div>
+                </button>
+                <button
+                  onClick={() => {
+                    handleEdit(selectedUpdate)
+                    closeDetailModal()
+                  }}
+                  className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-semibold flex items-center justify-center gap-2 hover:bg-blue-700 transition-all"
+                >
+                  <Edit size={20} />
+                  <div className='md:block hidden'>Edit Report</div>
+                </button>
+                <button
+                  onClick={() => {
+                    handleDelete(selectedUpdate.id!)
+                    closeDetailModal()
+                  }}
+                  className="flex-1 py-3 bg-red-600 text-white rounded-lg font-semibold flex items-center justify-center gap-2 hover:bg-red-700 transition-all"
+                >
+                  <Trash2 size={20} />
+                  <div className='md:block hidden'>Delete</div>
+                </button>
               </div>
             </div>
           </div>
