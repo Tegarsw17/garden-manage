@@ -41,8 +41,8 @@ export interface GardenUpdate {
   type: string
   plantId: string
   desc: string
-  media?: string
-  mediaType?: string
+  media?: string[]
+  mediaType?: string[]
   conditionIds?: number[]
   date: string
   created_at?: string
