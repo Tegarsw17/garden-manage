@@ -43,8 +43,21 @@ export interface GardenUpdate {
   desc: string
   media?: string
   mediaType?: string
+  conditionIds?: number[]
   date: string
   created_at?: string
+}
+
+export interface Condition {
+  id?: number
+  name: string
+  slug: string
+  color: string
+  icon: string
+  displayOrder: number
+  isActive: boolean
+  created_at?: string
+  updated_at?: string
 }
 
 // Garden data configuration
@@ -99,19 +112,22 @@ export async function getUpdates(garden?: string): Promise<GardenUpdate[]> {
   return (data || []).map(item => ({
     ...item,
     plantId: item.plant_id,
+    // Only use condition_ids now (condition_id was dropped)
+    conditionIds: item.condition_ids || [],
   })) as GardenUpdate[]
 }
 
 export async function createUpdate(update: GardenUpdate): Promise<GardenUpdate | null> {
   try {
     // Map camelCase to snake_case for database columns
-    const dbData = {
+    const dbData: any = {
       garden: update.garden,
       type: update.type,
       plant_id: update.plantId,
       desc: update.desc,
       media: update.media,
       date: update.date,
+      condition_ids: update.conditionIds || [],
     }
 
     const { data, error } = await supabase
@@ -128,6 +144,7 @@ export async function createUpdate(update: GardenUpdate): Promise<GardenUpdate |
     return data && data.length > 0 ? {
       ...data[0],
       plantId: data[0].plant_id,
+      conditionIds: data[0].condition_ids || [],
     } as GardenUpdate : null
   } catch (err) {
     console.error('Unexpected error creating update:', err)
@@ -144,6 +161,7 @@ export async function updateUpdate(id: number, update: Partial<GardenUpdate>): P
   if (update.desc !== undefined) dbData.desc = update.desc
   if (update.media !== undefined) dbData.media = update.media
   if (update.date !== undefined) dbData.date = update.date
+  if (update.conditionIds !== undefined) dbData.condition_ids = update.conditionIds
 
   const { data, error } = await supabase.from('updates').update(dbData).eq('id', id).select()
 
@@ -156,6 +174,7 @@ export async function updateUpdate(id: number, update: Partial<GardenUpdate>): P
   return data && data.length > 0 ? {
     ...data[0],
     plantId: data[0].plant_id,
+    conditionIds: data[0].condition_ids || [],
   } as GardenUpdate : null
 }
 
@@ -415,6 +434,195 @@ export async function deletePlant(id: number): Promise<boolean> {
   if (error) {
     console.error('Error deleting plant:', error)
     return false
+  }
+
+  return true
+}
+
+// =====================================================
+// CONDITIONS CRUD
+// =====================================================
+
+export async function getConditions(activeOnly: boolean = false): Promise<Condition[]> {
+  let query = supabase
+    .from('conditions')
+    .select('*')
+    .order('display_order')
+
+  if (activeOnly) {
+    query = query.eq('is_active', true)
+  }
+
+  const { data, error } = await query
+
+  if (error) {
+    console.error('Error fetching conditions:', error)
+    return []
+  }
+
+  // Map snake_case to camelCase
+  return (data || []).map(item => ({
+    id: item.id,
+    name: item.name,
+    slug: item.slug,
+    color: item.color,
+    icon: item.icon,
+    displayOrder: item.display_order,
+    isActive: item.is_active,
+    created_at: item.created_at,
+    updated_at: item.updated_at,
+  })) as Condition[]
+}
+
+export async function getConditionById(id: number): Promise<Condition | null> {
+  const { data, error } = await supabase
+    .from('conditions')
+    .select('*')
+    .eq('id', id)
+    .single()
+
+  if (error || !data) {
+    console.error('Error fetching condition:', error)
+    return null
+  }
+
+  return {
+    id: data.id,
+    name: data.name,
+    slug: data.slug,
+    color: data.color,
+    icon: data.icon,
+    displayOrder: data.display_order,
+    isActive: data.is_active,
+    created_at: data.created_at,
+    updated_at: data.updated_at,
+  } as Condition
+}
+
+export async function getConditionBySlug(slug: string): Promise<Condition | null> {
+  const { data, error } = await supabase
+    .from('conditions')
+    .select('*')
+    .eq('slug', slug)
+    .single()
+
+  if (error || !data) {
+    console.error('Error fetching condition by slug:', error)
+    return null
+  }
+
+  return {
+    id: data.id,
+    name: data.name,
+    slug: data.slug,
+    color: data.color,
+    icon: data.icon,
+    displayOrder: data.display_order,
+    isActive: data.is_active,
+    created_at: data.created_at,
+    updated_at: data.updated_at,
+  } as Condition
+}
+
+export async function createCondition(condition: Omit<Condition, 'id' | 'created_at' | 'updated_at'>): Promise<Condition | null> {
+  const dbData = {
+    name: condition.name,
+    slug: condition.slug,
+    color: condition.color,
+    icon: condition.icon,
+    display_order: condition.displayOrder,
+    is_active: condition.isActive,
+  }
+
+  const { data, error } = await supabase
+    .from('conditions')
+    .insert([dbData])
+    .select()
+    .single()
+
+  if (error) {
+    console.error('Error creating condition:', error)
+    return null
+  }
+
+  return {
+    id: data.id,
+    name: data.name,
+    slug: data.slug,
+    color: data.color,
+    icon: data.icon,
+    displayOrder: data.display_order,
+    isActive: data.is_active,
+    created_at: data.created_at,
+    updated_at: data.updated_at,
+  } as Condition
+}
+
+export async function updateCondition(id: number, condition: Partial<Omit<Condition, 'id' | 'created_at' | 'updated_at'>>): Promise<Condition | null> {
+  const dbData: any = {}
+  if (condition.name !== undefined) dbData.name = condition.name
+  if (condition.slug !== undefined) dbData.slug = condition.slug
+  if (condition.color !== undefined) dbData.color = condition.color
+  if (condition.icon !== undefined) dbData.icon = condition.icon
+  if (condition.displayOrder !== undefined) dbData.display_order = condition.displayOrder
+  if (condition.isActive !== undefined) dbData.is_active = condition.isActive
+
+  const { data, error } = await supabase
+    .from('conditions')
+    .update(dbData)
+    .eq('id', id)
+    .select()
+    .single()
+
+  if (error) {
+    console.error('Error updating condition:', error)
+    return null
+  }
+
+  return {
+    id: data.id,
+    name: data.name,
+    slug: data.slug,
+    color: data.color,
+    icon: data.icon,
+    displayOrder: data.display_order,
+    isActive: data.is_active,
+    created_at: data.created_at,
+    updated_at: data.updated_at,
+  } as Condition
+}
+
+export async function deleteCondition(id: number): Promise<boolean> {
+  const { error } = await supabase
+    .from('conditions')
+    .delete()
+    .eq('id', id)
+
+  if (error) {
+    console.error('Error deleting condition:', error)
+    return false
+  }
+
+  return true
+}
+
+export async function reorderConditions(conditionIds: number[]): Promise<boolean> {
+  // Update display_order for each condition
+  const updates = conditionIds.map((id, index) => ({
+    id,
+    display_order: index + 1,
+  }))
+
+  for (const item of updates) {
+    const { error } = await supabase
+      .from('conditions')
+      .update({ display_order: item.display_order })
+      .eq('id', item.id)
+
+    if (error) {
+      console.error('Error reordering conditions:', error)
+      return false
+    }
   }
 
   return true

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef, MouseEvent } from 'react'
-import { supabase, type GardenUpdate, type Garden, type Plant, getGardens, getPlants, getPlantsByGarden, getUpdates, createUpdate, updateUpdate, deleteUpdate, uploadMedia } from '@/lib/supabase'
+import { supabase, type GardenUpdate, type Garden, type Plant, type Condition, getGardens, getPlants, getPlantsByGarden, getUpdates, getConditions, createUpdate, updateUpdate, deleteUpdate, uploadMedia } from '@/lib/supabase'
 import { Share2, Edit, Trash2, Plus, X, Mic, Camera, Leaf, MoreVertical } from 'lucide-react'
 import Link from 'next/link'
 
@@ -30,6 +30,7 @@ export default function Home() {
   const [openMenuId, setOpenMenuId] = useState<number | null>(null)
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
   const [selectedUpdate, setSelectedUpdate] = useState<GardenUpdate | null>(null)
+  const [conditions, setConditions] = useState<Condition[]>([])
 
   // Form state
   const [formData, setFormData] = useState({
@@ -37,6 +38,7 @@ export default function Home() {
     plantId: '',
     desc: '',
     mediaUrl: '',
+    conditionIds: [] as number[],
   })
   const [mediaFile, setMediaFile] = useState<{ data: string; type: string } | null>(null)
   const [isListening, setIsListening] = useState(false)
@@ -66,8 +68,9 @@ export default function Home() {
       }
     }
 
-    // Load gardens and plants on mount
+    // Load gardens, plants, and conditions on mount
     loadGardensAndPlants()
+    loadConditions()
   }, [])
 
   // Load updates when active garden changes
@@ -95,6 +98,11 @@ export default function Home() {
     const plantsData = await getPlants()
     setGardens(gardensData)
     setPlants(plantsData)
+  }
+
+  const loadConditions = async () => {
+    const conditionsData = await getConditions(true) // Only active conditions
+    setConditions(conditionsData)
   }
 
   const loadPlantsForGarden = async (gardenId: number) => {
@@ -139,7 +147,7 @@ export default function Home() {
   // Modal handlers
   const openModal = () => {
     setIsModalOpen(true)
-    setFormData({ type: '', plantId: '', desc: '', mediaUrl: '' })
+    setFormData({ type: '', plantId: '', desc: '', mediaUrl: '', conditionIds: [] })
   }
 
   const closeModal = () => {
@@ -148,7 +156,7 @@ export default function Home() {
   }
 
   const resetForm = () => {
-    setFormData({ type: '', plantId: '', desc: '', mediaUrl: '' })
+    setFormData({ type: '', plantId: '', desc: '', mediaUrl: '', conditionIds: [] })
     setMediaFile(null)
     setIsEditing(false)
     setEditId(null)
@@ -227,6 +235,7 @@ export default function Home() {
       desc: formData.desc,
       media: mediaUrl,
       mediaType: mediaFile?.type || 'image/jpeg',
+      conditionIds: formData.conditionIds,
       date: new Date().toLocaleString(),
     }
 
@@ -243,7 +252,7 @@ export default function Home() {
     if (shouldClose) {
       closeModal()
     } else {
-      setFormData(prev => ({ ...prev, plantId: '', desc: '', mediaUrl: '' }))
+      setFormData(prev => ({ ...prev, plantId: '', desc: '', mediaUrl: '', conditionIds: [] }))
       setMediaFile(null)
     }
   }
@@ -251,11 +260,16 @@ export default function Home() {
   const handleEdit = (update: GardenUpdate) => {
     setIsEditing(true)
     setEditId(update.id || null)
+
+    // Find the plant by name (since update.plantId is the plant NAME, not ID)
+    const plant = plants.find(p => p.plantName === update.plantId)
+
     setFormData({
       type: update.type,
-      plantId: update.plantId,
+      plantId: plant?.id?.toString() || '',
       desc: update.desc,
       mediaUrl: update.media?.startsWith('data:') || update.media?.startsWith('blob:') ? '' : (update.media || ''),
+      conditionIds: update.conditionIds || [],
     })
     setMediaFile(update.media?.startsWith('data:') || update.media?.startsWith('blob:') ? { data: update.media, type: update.mediaType || 'image/jpeg' } : null)
     setIsModalOpen(true)
@@ -302,6 +316,17 @@ export default function Home() {
       newSelected.add(id)
     }
     setSelectedIds(newSelected)
+  }
+
+  const toggleCondition = (conditionId: number) => {
+    setFormData(prev => {
+      const currentIds = prev.conditionIds || []
+      if (currentIds.includes(conditionId)) {
+        return { ...prev, conditionIds: currentIds.filter(id => id !== conditionId) }
+      } else {
+        return { ...prev, conditionIds: [...currentIds, conditionId] }
+      }
+    })
   }
 
   // Share functions
@@ -502,11 +527,26 @@ export default function Home() {
                   )}
                   <div className="flex justify-between items-start mb-4">
                     <div className="flex-1">
-                      <span className="inline-block bg-green-100 text-green-900 font-bold px-3 py-1.5 rounded-lg text-sm">
-                        {update.type}
-                      </span>
-                      <p className="text-sm text-gray-500 mt-2">
-                         {update.plantId}
+                      <div className="flex flex-wrap items-center gap-2 mb-2">
+                        <span className="inline-block bg-green-100 text-green-900 font-bold px-3 py-1.5 rounded-lg text-sm">
+                          {update.type}
+                        </span>
+                        {update.conditionIds && update.conditionIds.map(conditionId => {
+                          const condition = conditions.find(c => c.id === conditionId)
+                          return condition ? (
+                            <span
+                              key={condition.id}
+                              className="inline-block font-bold px-3 py-1.5 rounded-lg text-sm"
+                              style={{ backgroundColor: condition.color + '20', color: condition.color }}
+                            >
+                              {condition.icon}
+                              <span className="hidden md:inline">{condition.name}</span>
+                            </span>
+                          ) : null
+                        })}
+                      </div>
+                      <p className="text-sm text-gray-500">
+                        <strong>{update.garden}</strong> • {update.plantId}
                       </p>
                     </div>
                     {/* Desktop: Show icons directly */}
@@ -633,7 +673,7 @@ export default function Home() {
       {/* Modal */}
       {isModalOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-[300] flex items-end justify-center p-0 md:items-center md:p-4"
+          className="fixed inset-0 bg-black/50 z-[310] flex items-end justify-center p-0 md:items-center md:p-4"
           onClick={(e) => e.target === e.currentTarget && closeModal()}
         >
           <div className="bg-white w-full max-w-lg rounded-t-2xl md:rounded-2xl p-6 max-h-[90vh] overflow-y-auto">
@@ -707,6 +747,36 @@ export default function Home() {
                     {isListening ? 'Listening...' : 'Tap to Speak'}
                   </button>
                 )}
+              </div>
+
+              {/* Condition */}
+              <div>
+                <label className="block text-sm font-bold text-green-700 uppercase tracking-wide mb-2">
+                  Plant Conditions
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  {conditions.map(condition => (
+                    <label
+                      key={condition.id}
+                      className={`flex items-center gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                        (formData.conditionIds || []).includes(condition.id!)
+                          ? 'border-green-700 bg-green-50'
+                          : 'border-gray-200 hover:border-gray-300'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={(formData.conditionIds || []).includes(condition.id!)}
+                        onChange={() => toggleCondition(condition.id!)}
+                        className="w-5 h-5 accent-green-700"
+                      />
+                      <span className="text-sm">
+                        {condition.icon} {condition.name}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-500 mt-2">Optional - Select one or more conditions</p>
               </div>
 
               {/* Media */}
@@ -784,9 +854,24 @@ export default function Home() {
           <div className="bg-white w-full max-w-2xl rounded-t-2xl md:rounded-2xl p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6 pb-4 border-b">
               <div>
-                <span className="inline-block bg-green-100 text-green-900 font-bold px-3 py-1.5 rounded-lg text-sm mb-2">
-                  {selectedUpdate.type}
-                </span>
+                <div className="flex flex-wrap items-center gap-2 mb-2">
+                  <span className="inline-block bg-green-100 text-green-900 font-bold px-3 py-1.5 rounded-lg text-sm">
+                    {selectedUpdate.type}
+                  </span>
+                  {selectedUpdate.conditionIds && selectedUpdate.conditionIds.map(conditionId => {
+                    const condition = conditions.find(c => c.id === conditionId)
+                    return condition ? (
+                      <span
+                        key={condition.id}
+                        className="inline-block font-bold px-3 py-1.5 rounded-lg text-sm"
+                        style={{ backgroundColor: condition.color + '20', color: condition.color }}
+                      >
+                        {condition.icon}
+                        <span className="hidden md:inline">{condition.name}</span>
+                      </span>
+                    ) : null
+                  })}
+                </div>
                 <h2 className="text-xl text-black font-semibold">{selectedUpdate.plantId}</h2>
               </div>
               <button
