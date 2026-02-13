@@ -109,12 +109,31 @@ export async function getUpdates(garden?: string): Promise<GardenUpdate[]> {
   }
 
   // Map snake_case to camelCase
-  return (data || []).map(item => ({
-    ...item,
-    plantId: item.plant_id,
-    // Only use condition_ids now (condition_id was dropped)
-    conditionIds: item.condition_ids || [],
-  })) as GardenUpdate[]
+  return (data || []).map(item => {
+    // Handle media from both old (media) and new (media_new) columns
+    // New format from migration has JSONB arrays, old format has strings
+    const mediaValue = item.media_new || item.media
+    const mediaTypeValue = item.media_type_new || item.media_type
+
+    // Normalize: ensure array format for multiple media support
+    // If it's already an array, use it; if it's a single string, wrap in array
+    const normalizedMedia = Array.isArray(mediaValue)
+      ? mediaValue
+      : (mediaValue ? [mediaValue] : [])
+
+    const normalizedMediaType = Array.isArray(mediaTypeValue)
+      ? mediaTypeValue
+      : (mediaTypeValue ? [mediaTypeValue] : [])
+
+    return {
+      ...item,
+      plantId: item.plant_id,
+      media: normalizedMedia,
+      mediaType: normalizedMediaType,
+      // Only use condition_ids now (condition_id was dropped)
+      conditionIds: item.condition_ids || [],
+    }
+  }) as GardenUpdate[]
 }
 
 export async function createUpdate(update: GardenUpdate): Promise<GardenUpdate | null> {
@@ -125,9 +144,12 @@ export async function createUpdate(update: GardenUpdate): Promise<GardenUpdate |
       type: update.type,
       plant_id: update.plantId,
       desc: update.desc,
-      media: update.media,
       date: update.date,
       condition_ids: update.conditionIds || [],
+      // Use new array columns for multiple media support
+      // Convert single string to array for database
+      media_new: Array.isArray(update.media) ? update.media : (update.media ? [update.media] : []),
+      media_type_new: Array.isArray(update.mediaType) ? update.mediaType : (update.mediaType ? [update.mediaType] : []),
     }
 
     const { data, error } = await supabase
@@ -144,6 +166,8 @@ export async function createUpdate(update: GardenUpdate): Promise<GardenUpdate |
     return data && data.length > 0 ? {
       ...data[0],
       plantId: data[0].plant_id,
+      media: data[0].media_new || [],
+      mediaType: data[0].media_type_new || [],
       conditionIds: data[0].condition_ids || [],
     } as GardenUpdate : null
   } catch (err) {
@@ -159,7 +183,8 @@ export async function updateUpdate(id: number, update: Partial<GardenUpdate>): P
   if (update.type !== undefined) dbData.type = update.type
   if (update.plantId !== undefined) dbData.plant_id = update.plantId
   if (update.desc !== undefined) dbData.desc = update.desc
-  if (update.media !== undefined) dbData.media = update.media
+  if (update.media !== undefined) dbData.media_new = Array.isArray(update.media) ? update.media : (update.media ? [update.media] : [])
+  if (update.mediaType !== undefined) dbData.media_type_new = Array.isArray(update.mediaType) ? update.mediaType : (update.mediaType ? [update.mediaType] : [])
   if (update.date !== undefined) dbData.date = update.date
   if (update.conditionIds !== undefined) dbData.condition_ids = update.conditionIds
 
@@ -174,6 +199,8 @@ export async function updateUpdate(id: number, update: Partial<GardenUpdate>): P
   return data && data.length > 0 ? {
     ...data[0],
     plantId: data[0].plant_id,
+    media: data[0].media_new || [],
+    mediaType: data[0].media_type_new || [],
     conditionIds: data[0].condition_ids || [],
   } as GardenUpdate : null
 }
@@ -189,21 +216,43 @@ export async function deleteUpdate(id: number): Promise<boolean> {
   return true
 }
 
+// Upload multiple media files
+export async function uploadMediaArray(files: File[]): Promise<string[]> {
+  const urls: string[] = []
+  for (const file of files) {
+    const fileExt = file.name.split('.').pop()
+    const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`
+    const filePath = `${fileName}`
+
+    const { error } = await supabase.storage.from('media').upload(filePath, file)
+
+    if (error) {
+      console.error('Error uploading file:', error)
+    } else {
+      const { data: urlData } = await supabase.storage.from('media').getPublicUrl(filePath)
+      urls.push(urlData.publicUrl)
+    }
+  }
+
+  return urls
+}
+
+// Upload single media file (for backwards compatibility)
 export async function uploadMedia(file: File): Promise<string | null> {
   const fileExt = file.name.split('.').pop()
   const fileName = `${Date.now()}.${fileExt}`
   const filePath = `${fileName}`
 
-  const { data, error } = await supabase.storage.from('media').upload(filePath, file)
+  const { error } = await supabase.storage.from('media').upload(filePath, file)
 
   if (error) {
     console.error('Error uploading file:', error)
     return null
   }
 
-  const { data: { publicUrl } } = supabase.storage.from('media').getPublicUrl(filePath)
+  const { data: urlData } = await supabase.storage.from('media').getPublicUrl(filePath)
 
-  return publicUrl
+  return urlData?.publicUrl || ''
 }
 
 // =====================================================

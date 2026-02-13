@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef, MouseEvent } from 'react'
-import { supabase, type GardenUpdate, type Garden, type Plant, type Condition, getGardens, getPlants, getPlantsByGarden, getUpdates, getConditions, createUpdate, updateUpdate, deleteUpdate, uploadMedia } from '@/lib/supabase'
+import { supabase, type GardenUpdate, type Garden, type Plant, type Condition, getGardens, getPlants, getPlantsByGarden, getUpdates, getConditions, createUpdate, updateUpdate, deleteUpdate, uploadMedia, uploadMediaArray } from '@/lib/supabase'
 import { Share2, Edit, Trash2, Plus, X, Mic, Camera, Leaf, MoreVertical } from 'lucide-react'
 import Link from 'next/link'
 
@@ -37,10 +37,10 @@ export default function Home() {
     type: '',
     plantId: '',
     desc: '',
-    mediaUrl: '',
     conditionIds: [] as number[],
   })
-  const [mediaFile, setMediaFile] = useState<{ data: string; type: string } | null>(null)
+  const [mediaFiles, setMediaFiles] = useState<{ data: string; type: string }[]>([])
+  const [mediaUrls, setMediaUrls] = useState<string[]>([])
   const [isListening, setIsListening] = useState(false)
 
   // Speech recognition
@@ -156,8 +156,9 @@ export default function Home() {
   }
 
   const resetForm = () => {
-    setFormData({ type: '', plantId: '', desc: '', mediaUrl: '', conditionIds: [] })
-    setMediaFile(null)
+    setFormData({ type: '', plantId: '', desc: '', conditionIds: [] })
+    setMediaFiles([])
+    setMediaUrls([])
     setIsEditing(false)
     setEditId(null)
   }
@@ -170,29 +171,37 @@ export default function Home() {
     }
   }
 
-  const handleMediaFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      const reader = new FileReader()
-      reader.onload = (event) => {
-        setMediaFile({
-          data: event.target?.result as string,
-          type: file.type
+  const handleMediaFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    if (files.length > 0) {
+      // Read all files and wait for them to complete
+      const filePromises = files.map(file => {
+        return new Promise<{ data: string; type: string }>((resolve) => {
+          const reader = new FileReader()
+          reader.onload = (event) => {
+            const dataUrl = event.target?.result as string
+            resolve({ data: dataUrl, type: file.type })
+          }
+          reader.onerror = () => {
+            console.error('Error reading file:', file.name)
+            resolve({ data: '', type: file.type })
+          }
+          reader.readAsDataURL(file)
         })
-        setFormData(prev => ({ ...prev, mediaUrl: '' }))
-      }
-      reader.readAsDataURL(file)
-    }
-  }
+      })
 
-  const handleMediaUrlChange = (url: string) => {
-    setFormData(prev => ({ ...prev, mediaUrl: url }))
-    setMediaFile(null)
+      const newFiles = await Promise.all(filePromises)
+      setMediaFiles(prev => [...prev, ...newFiles.filter(f => f.data !== '')])
+    }
   }
 
   const toggleSpeech = () => {
     if (!recognitionRef.current) return
     isListening ? recognitionRef.current.stop() : recognitionRef.current.start()
+  }
+
+  const removeMediaFile = (index: number) => {
+    setMediaFiles(prev => prev.filter((_, i) => i !== index))
   }
 
   // Submit handlers
@@ -203,28 +212,36 @@ export default function Home() {
     const selectedPlant = plants.find(p => p.id === Number(formData.plantId))
     if (!selectedPlant) return
 
-    let mediaUrl = formData.mediaUrl
+    // Upload media files if present
+    const uploadedMediaUrls: string[] = []
+    const uploadedMediaTypes: string[] = []
 
-    // Upload media file if present
-    if (mediaFile?.data && mediaFile.data.startsWith('data:')) {
-      // Convert data URL to blob and upload to Supabase
-      try {
-        const base64Data = mediaFile.data.split(',')[1]
-        const byteCharacters = atob(base64Data)
-        const byteNumbers = new Array(byteCharacters.length)
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i)
-        }
-        const byteArray = new Uint8Array(byteNumbers)
-        const blob = new Blob([byteArray], { type: mediaFile.type })
-        const file = new File([blob], `media.${mediaFile.type.split('/')[1]}`, { type: mediaFile.type })
+    for (const mediaFile of mediaFiles) {
+      if (mediaFile.data && mediaFile.data.startsWith('data:')) {
+        // Convert data URL to blob and upload to Supabase
+        try {
+          const base64Data = mediaFile.data.split(',')[1]
+          const byteCharacters = atob(base64Data)
+          const byteNumbers = new Array(byteCharacters.length)
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i)
+          }
+          const byteArray = new Uint8Array(byteNumbers)
+          const blob = new Blob([byteArray], { type: mediaFile.type })
+          const file = new File([blob], `media.${mediaFile.type.split('/')[1]}`, { type: mediaFile.type })
 
-        const uploadedUrl = await uploadMedia(file)
-        if (uploadedUrl) {
-          mediaUrl = uploadedUrl
+          const uploadedUrls = await uploadMediaArray([file])
+          if (uploadedUrls.length > 0) {
+            uploadedMediaUrls.push(uploadedUrls[0])
+            uploadedMediaTypes.push(mediaFile.type)
+          }
+        } catch (error) {
+          console.error('Upload error:', error)
         }
-      } catch (error) {
-        console.error('Upload error:', error)
+      } else if (mediaFile.data && !mediaFile.data.startsWith('data:')) {
+        // Existing URL - preserve it
+        uploadedMediaUrls.push(mediaFile.data)
+        uploadedMediaTypes.push(mediaFile.type)
       }
     }
 
@@ -233,8 +250,8 @@ export default function Home() {
       type: selectedPlant.plantTypeName || '',
       plantId: selectedPlant.plantName,
       desc: formData.desc,
-      media: mediaUrl,
-      mediaType: mediaFile?.type || 'image/jpeg',
+      media: uploadedMediaUrls,
+      mediaType: uploadedMediaTypes,
       conditionIds: formData.conditionIds,
       date: new Date().toLocaleString(),
     }
@@ -252,8 +269,8 @@ export default function Home() {
     if (shouldClose) {
       closeModal()
     } else {
-      setFormData(prev => ({ ...prev, plantId: '', desc: '', mediaUrl: '', conditionIds: [] }))
-      setMediaFile(null)
+      setFormData(prev => ({ ...prev, plantId: '', desc: '', conditionIds: [] }))
+      setMediaFiles([])
     }
   }
 
@@ -264,14 +281,27 @@ export default function Home() {
     // Find the plant by name (since update.plantId is the plant NAME, not ID)
     const plant = plants.find(p => p.plantName === update.plantId)
 
+    // Handle media - can be string (old) or array (new from migration)
+    const existingMediaUrls = Array.isArray(update.media) ? update.media : (update.media ? [update.media] : [])
+    const existingMediaTypes = Array.isArray(update.mediaType) ? update.mediaType : (update.mediaType ? [update.mediaType] : [])
+
+    // Load files from existing media URLs
+    const loadedFiles: { data: string; type: string }[] = []
+    existingMediaUrls.forEach((url, i) => {
+      if (url && url.startsWith && !url.startsWith('data:') && !url.startsWith('blob:')) {
+        // Use the first type or default to image/jpeg
+        const type = existingMediaTypes[i] || 'image/jpeg'
+        loadedFiles.push({ data: url, type })
+      }
+    })
+
     setFormData({
       type: update.type,
       plantId: plant?.id?.toString() || '',
       desc: update.desc,
-      mediaUrl: update.media?.startsWith('data:') || update.media?.startsWith('blob:') ? '' : (update.media || ''),
       conditionIds: update.conditionIds || [],
     })
-    setMediaFile(update.media?.startsWith('data:') || update.media?.startsWith('blob:') ? { data: update.media, type: update.mediaType || 'image/jpeg' } : null)
+    setMediaFiles(loadedFiles)
     setIsModalOpen(true)
   }
 
@@ -417,13 +447,153 @@ export default function Home() {
     return text.substring(0, maxLength) + '...'
   }
 
-  // Helper function to render media
-  const renderMedia = (media: string, mediaType?: string) => {
-    const isVideo = mediaType?.startsWith('video')
-    if (isVideo) {
-      return <video controls src={media} className="w-full h-48 object-cover rounded-lg mt-3" />
+  // Helper function to render media in card view (first image + badge)
+  const renderMediaCard = (media: string | string[], mediaType?: string | string[]) => {
+    // Normalize to array format
+    const mediaUrls = Array.isArray(media) ? media : (media ? [media] : [])
+    const mediaTypes = Array.isArray(mediaType) ? mediaType : (mediaType ? [mediaType] : [])
+
+    // Don't render if no media URLs
+    if (mediaUrls.length === 0) return null
+
+    const mediaUrl = mediaUrls[0]
+    const typeValue = mediaTypes[0]
+
+    if (!mediaUrl) return null
+
+    const isVideo = typeof typeValue === 'string' && typeValue.startsWith('video')
+    return (
+      <div className="relative">
+        {isVideo ? (
+          <video controls src={mediaUrl} className="w-full h-48 object-cover rounded-lg mt-3" />
+        ) : (
+          <img src={mediaUrl} alt="Media" className="w-full h-48 object-cover rounded-lg mt-3" />
+        )}
+        {mediaUrls.length > 1 && (
+          <div className="absolute top-4 right-4 bg-blue-600 text-white text-sm font-bold px-2.5 py-1 rounded-full shadow-lg">
+            +{mediaUrls.length - 1}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // Helper function to render media carousel in detail modal
+  const renderMediaCarousel = (media: string | string[], mediaType?: string | string[]) => {
+    // Normalize to array format
+    const mediaUrls = Array.isArray(media) ? media : (media ? [media] : [])
+    const mediaTypes = Array.isArray(mediaType) ? mediaType : (mediaType ? [mediaType] : [])
+
+    // Don't render if no media URLs
+    if (mediaUrls.length === 0) return null
+
+    // Only one media item, render it directly
+    if (mediaUrls.length === 1) {
+      const mediaUrl = mediaUrls[0]
+      const typeValue = mediaTypes[0]
+
+      if (!mediaUrl) return null
+
+      const isVideo = typeof typeValue === 'string' && typeValue.startsWith('video')
+      if (isVideo) {
+        return <video controls src={mediaUrl} className="w-full h-auto max-h-[500px] object-contain rounded-lg bg-black" />
+      }
+      return <img src={mediaUrl} alt="Media" className="w-full h-auto max-h-[500px] object-contain rounded-lg" />
     }
-    return <img src={media} alt="Media" className="w-full h-48 object-cover rounded-lg mt-3" />
+
+    // Multiple media items - use carousel
+    return <MediaCarousel mediaUrls={mediaUrls} mediaTypes={mediaTypes} />
+  }
+
+  // Helper function to render media (for card view - uses renderMediaCard)
+  const renderMedia = (media: string | string[], mediaType?: string | string[]) => {
+    return renderMediaCard(media, mediaType)
+  }
+
+  // Media Carousel Component
+  function MediaCarousel({ mediaUrls, mediaTypes }: { mediaUrls: string[], mediaTypes: (string | undefined)[] }) {
+    const [currentIndex, setCurrentIndex] = useState(0)
+
+    const goToPrevious = () => {
+      setCurrentIndex((prevIndex) => (prevIndex === 0 ? mediaUrls.length - 1 : prevIndex - 1))
+    }
+
+    const goToNext = () => {
+      setCurrentIndex((prevIndex) => (prevIndex === mediaUrls.length - 1 ? 0 : prevIndex + 1))
+    }
+
+    const currentUrl = mediaUrls[currentIndex]
+    const currentType = mediaTypes[currentIndex]
+    const isVideo = typeof currentType === 'string' && currentType.startsWith('video')
+
+    return (
+      <div className="relative bg-gray-900 rounded-lg overflow-hidden">
+        <div className="flex items-center justify-center min-h-[300px]">
+          {isVideo ? (
+            <video
+              key={currentIndex}
+              controls
+              src={currentUrl}
+              className="w-full h-auto max-h-[500px] object-contain"
+            />
+          ) : (
+            <img
+              key={currentIndex}
+              src={currentUrl}
+              alt={`Media ${currentIndex + 1}`}
+              className="w-full h-auto max-h-[500px] object-contain"
+            />
+          )}
+        </div>
+
+        {/* Navigation buttons */}
+        {mediaUrls.length > 1 && (
+          <>
+            <button
+              onClick={goToPrevious}
+              className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-2 rounded-full transition-all"
+              aria-label="Previous"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+              </svg>
+            </button>
+            <button
+              onClick={goToNext}
+              className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/50 hover:bg-black/70 text-white p-2 rounded-full transition-all"
+              aria-label="Next"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+              </svg>
+            </button>
+          </>
+        )}
+
+        {/* Indicators */}
+        {mediaUrls.length > 1 && (
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
+            {mediaUrls.map((_, index) => (
+              <button
+                key={index}
+                onClick={() => setCurrentIndex(index)}
+                className={`w-2.5 h-2.5 rounded-full transition-all ${
+                  index === currentIndex ? 'bg-white w-8' : 'bg-white/50'
+                }`}
+                aria-label={`Go to slide ${index + 1}`}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Counter */}
+        {mediaUrls.length > 1 && (
+          <div className="absolute top-4 right-4 bg-black/50 text-white text-sm font-medium px-3 py-1.5 rounded-full">
+            {currentIndex + 1} / {mediaUrls.length}
+          </div>
+        )}
+      </div>
+    )
   }
 
   return (
@@ -782,45 +952,51 @@ export default function Home() {
               {/* Media */}
               <div>
                 <label className="block text-sm font-bold text-green-700 uppercase tracking-wide mb-2">
-                  Photo / Video
+                  Photos / Videos
                 </label>
                 <div className="border border-gray-300 rounded-lg p-4 bg-gray-50">
-                  <input
-                    type="text"
-                    value={formData.mediaUrl}
-                    onChange={(e) => handleMediaUrlChange(e.target.value)}
-                    placeholder="Paste Image Link here..."
-                    className="w-full border-none bg-transparent outline-none text-green-700 font-medium mb-3"
-                  />
-                  <div className="relative text-center text-sm text-gray-400 my-3">
-                    <span className="relative z-10 bg-gray-50 px-3">OR</span>
-                    <div className="absolute top-1/2 left-0 right-0 h-px bg-gray-300 -z-0" />
-                  </div>
                   <label className="block w-full py-3 text-center bg-white border border-green-700 text-green-700 rounded-lg font-semibold cursor-pointer hover:bg-green-50 transition-all">
                     <input
                       type="file"
                       accept="image/*,video/*"
+                      multiple
                       onChange={handleMediaFileSelect}
                       className="hidden"
                     />
                     📸 Upload from Camera
                   </label>
-                </div>
-
-                {/* Media Preview */}
-                <div className="w-full h-48 bg-gray-100 rounded-lg mt-3 flex items-center justify-center overflow-hidden border-2 border-dashed border-gray-300">
-                  {mediaFile?.data ? (
-                    mediaFile.type?.startsWith('video') ? (
-                      <video src={mediaFile.data} controls className="w-full h-full object-cover" />
-                    ) : (
-                      <img src={mediaFile.data} alt="Preview" className="w-full h-full object-cover" />
-                    )
-                  ) : formData.mediaUrl ? (
-                    <img src={formData.mediaUrl} alt="Preview" className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none' }} />
-                  ) : (
-                    <span className="text-gray-400">No media selected</span>
+                  {mediaFiles.length > 0 && (
+                    <div className="mt-2 text-sm font-semibold text-gray-600">
+                      {mediaFiles.length} file{mediaFiles.length === 1 ? '' : 's'} selected
+                    </div>
                   )}
                 </div>
+
+                {/* Media Previews */}
+                {mediaFiles.length > 0 ? (
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    {mediaFiles.map((file, index) => (
+                      <div key={index} className="relative group">
+                        {file.type?.startsWith('video') ? (
+                          <video src={file.data} controls className="w-full h-24 object-cover rounded-lg" />
+                        ) : (
+                          <img src={file.data} alt={`Preview ${index + 1}`} className="w-full h-24 object-cover rounded-lg" />
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeMediaFile(index)}
+                          className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-500 mt-2 text-center">
+                    No media selected
+                  </div>
+                )}
               </div>
 
               {/* Buttons */}
@@ -891,7 +1067,7 @@ export default function Home() {
               {/* Media */}
               {selectedUpdate.media && (
                 <div className="rounded-lg overflow-hidden">
-                  {renderMedia(selectedUpdate.media, selectedUpdate.mediaType)}
+                  {renderMediaCarousel(selectedUpdate.media, selectedUpdate.mediaType)}
                 </div>
               )}
 
