@@ -147,7 +147,7 @@ export default function Home() {
   // Modal handlers
   const openModal = () => {
     setIsModalOpen(true)
-    setFormData({ type: '', plantId: '', desc: '', mediaUrl: '', conditionIds: [] })
+    setFormData({ type: '', plantId: '', desc: '', conditionIds: [] })
   }
 
   const closeModal = () => {

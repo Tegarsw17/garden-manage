@@ -592,7 +592,7 @@ export default function DashboardPage() {
                             </>
                           ) : (
                             <>
-                              {update.mediaType?.startsWith?.('video') ? (
+                              {update.mediaType?.[0]?.startsWith?.('video') ? (
                                 <video src={update.media} className="w-full h-full object-cover rounded" controls />
                               ) : (
                                 <img src={update.media} alt="Media" className="w-full h-full object-cover rounded" />
@@ -787,7 +787,7 @@ export default function DashboardPage() {
                 <select
                   value={formData.plantId}
                   onChange={(e) => setFormData(prev => ({ ...prev, plantId: e.target.value }))}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:border-green-700 focus:ring-2 focus:ring-green-100"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg text-black bg-white focus:outline-none focus:border-green-700 focus:ring-2 focus:ring-green-100"
                   required
                 >
                   <option value="">Select a plant</option>
@@ -808,7 +808,7 @@ export default function DashboardPage() {
                   value={formData.desc}
                   onChange={(e) => setFormData(prev => ({ ...prev, desc: e.target.value }))}
                   placeholder="Enter observation notes..."
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg bg-white focus:outline-none focus:border-green-700 focus:ring-2 focus:ring-green-100"
+                  className="w-full px-4 py-3 border text-black border-gray-300 rounded-lg bg-white focus:outline-none focus:border-green-700 focus:ring-2 focus:ring-green-100"
                   rows={4}
                   required
                 />
@@ -824,17 +824,16 @@ export default function DashboardPage() {
                     <button
                       key={condition.id}
                       type="button"
-                      onClick={() => toggleCondition(condition.id)}
+                      onClick={() => condition.id !== undefined && toggleCondition(condition.id)}
                       className={`px-3 py-2 rounded-lg font-semibold transition-all ${
-                        (formData.conditionIds || []).includes(condition.id)
+                        (formData.conditionIds || []).includes(condition.id!)
                           ? 'ring-2 ring-offset-2'
                           : 'opacity-50 hover:opacity-100'
                       }`}
                       style={{
                         backgroundColor: condition.color + '20',
                         color: condition.color,
-                        ringColor: condition.color
-                      }}
+                      } as React.CSSProperties}
                     >
                       {condition.icon} {condition.name}
                     </button>
