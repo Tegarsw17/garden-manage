@@ -52,9 +52,11 @@ export default function Home() {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
       if (SpeechRecognition) {
         recognitionRef.current = new SpeechRecognition()
+        // merekam kalimat panjang tnapa henti
         recognitionRef.current.continuous = false
+        // teks muncul saat user masih bicara
         recognitionRef.current.interimResults = false
-        recognitionRef.current.lang = 'en-US'
+        recognitionRef.current.lang = 'id-ID'
 
         recognitionRef.current.onstart = () => setIsListening(true)
         recognitionRef.current.onend = () => setIsListening(false)
