@@ -42,6 +42,7 @@ export default function Home() {
   const [mediaFiles, setMediaFiles] = useState<{ data: string; type: string }[]>([])
   const [mediaUrls, setMediaUrls] = useState<string[]>([])
   const [isListening, setIsListening] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   // Speech recognition
   const recognitionRef = useRef<any>(null)
@@ -208,71 +209,77 @@ export default function Home() {
 
   // Submit handlers
   const handleSubmit = async (shouldClose: boolean) => {
-    if (!activeGarden || !formData.plantId || !formData.desc) return
+    if (!activeGarden || !formData.plantId || !formData.desc || isSubmitting) return
 
-    // Find the selected plant
-    const selectedPlant = plants.find(p => p.id === Number(formData.plantId))
-    if (!selectedPlant) return
+    setIsSubmitting(true)
 
-    // Upload media files if present
-    const uploadedMediaUrls: string[] = []
-    const uploadedMediaTypes: string[] = []
+    try {
+      // Find the selected plant
+      const selectedPlant = plants.find(p => p.id === Number(formData.plantId))
+      if (!selectedPlant) return
 
-    for (const mediaFile of mediaFiles) {
-      if (mediaFile.data && mediaFile.data.startsWith('data:')) {
-        // Convert data URL to blob and upload to Supabase
-        try {
-          const base64Data = mediaFile.data.split(',')[1]
-          const byteCharacters = atob(base64Data)
-          const byteNumbers = new Array(byteCharacters.length)
-          for (let i = 0; i < byteCharacters.length; i++) {
-            byteNumbers[i] = byteCharacters.charCodeAt(i)
+      // Upload media files if present
+      const uploadedMediaUrls: string[] = []
+      const uploadedMediaTypes: string[] = []
+
+      for (const mediaFile of mediaFiles) {
+        if (mediaFile.data && mediaFile.data.startsWith('data:')) {
+          // Convert data URL to blob and upload to Supabase
+          try {
+            const base64Data = mediaFile.data.split(',')[1]
+            const byteCharacters = atob(base64Data)
+            const byteNumbers = new Array(byteCharacters.length)
+            for (let i = 0; i < byteCharacters.length; i++) {
+              byteNumbers[i] = byteCharacters.charCodeAt(i)
+            }
+            const byteArray = new Uint8Array(byteNumbers)
+            const blob = new Blob([byteArray], { type: mediaFile.type })
+            const file = new File([blob], `media.${mediaFile.type.split('/')[1]}`, { type: mediaFile.type })
+
+            const uploadedUrls = await uploadMediaArray([file])
+            if (uploadedUrls.length > 0) {
+              uploadedMediaUrls.push(uploadedUrls[0])
+              uploadedMediaTypes.push(mediaFile.type)
+            }
+          } catch (error) {
+            console.error('Upload error:', error)
           }
-          const byteArray = new Uint8Array(byteNumbers)
-          const blob = new Blob([byteArray], { type: mediaFile.type })
-          const file = new File([blob], `media.${mediaFile.type.split('/')[1]}`, { type: mediaFile.type })
-
-          const uploadedUrls = await uploadMediaArray([file])
-          if (uploadedUrls.length > 0) {
-            uploadedMediaUrls.push(uploadedUrls[0])
-            uploadedMediaTypes.push(mediaFile.type)
-          }
-        } catch (error) {
-          console.error('Upload error:', error)
+        } else if (mediaFile.data && !mediaFile.data.startsWith('data:')) {
+          // Existing URL - preserve it
+          uploadedMediaUrls.push(mediaFile.data)
+          uploadedMediaTypes.push(mediaFile.type)
         }
-      } else if (mediaFile.data && !mediaFile.data.startsWith('data:')) {
-        // Existing URL - preserve it
-        uploadedMediaUrls.push(mediaFile.data)
-        uploadedMediaTypes.push(mediaFile.type)
       }
-    }
 
-    const updateData: GardenUpdate = {
-      garden: activeGarden.name,
-      type: selectedPlant.plantTypeName || '',
-      plantId: selectedPlant.plantName,
-      desc: formData.desc,
-      media: uploadedMediaUrls,
-      mediaType: uploadedMediaTypes,
-      conditionIds: formData.conditionIds,
-      date: new Date().toLocaleString(),
-    }
+      const updateData: GardenUpdate = {
+        garden: activeGarden.name,
+        type: selectedPlant.plantTypeName || '',
+        plantId: selectedPlant.plantName,
+        desc: formData.desc,
+        media: uploadedMediaUrls,
+        mediaType: uploadedMediaTypes,
+        conditionIds: formData.conditionIds,
+        date: new Date().toLocaleString(),
+      }
 
-    if (isEditing && editId) {
-      await updateUpdate(editId, updateData)
-      showToast('Report updated!')
-    } else {
-      await createUpdate(updateData)
-      showToast(`Saved for ${selectedPlant.plantName}`)
-    }
+      if (isEditing && editId) {
+        await updateUpdate(editId, updateData)
+        showToast('Report updated!')
+      } else {
+        await createUpdate(updateData)
+        showToast(`Saved for ${selectedPlant.plantName}`)
+      }
 
-    await loadUpdates()
+      await loadUpdates()
 
-    if (shouldClose) {
-      closeModal()
-    } else {
-      setFormData(prev => ({ ...prev, plantId: '', desc: '', conditionIds: [] }))
-      setMediaFiles([])
+      if (shouldClose) {
+        closeModal()
+      } else {
+        setFormData(prev => ({ ...prev, plantId: '', desc: '', conditionIds: [] }))
+        setMediaFiles([])
+      }
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
@@ -1005,16 +1012,38 @@ export default function Home() {
               <div className="flex gap-4 pt-2">
                 <button
                   onClick={() => handleSubmit(true)}
-                  className="flex-1 py-4 border-none rounded-lg text-lg font-semibold text-white bg-green-700 hover:bg-green-800 hover:-translate-y-0.5 transition-all"
+                  disabled={isSubmitting}
+                  className="flex-1 py-4 border-none rounded-lg text-lg font-semibold text-white bg-green-700 hover:bg-green-800 hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 flex items-center justify-center gap-2"
                 >
-                  {isEditing ? 'Update Report' : 'Done'}
+                  {isSubmitting ? (
+                    <>
+                      <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      {isEditing ? 'Updating...' : 'Saving...'}
+                    </>
+                  ) : (
+                    <>{isEditing ? 'Update Report' : 'Done'}</>
+                  )}
                 </button>
                 {!isEditing && (
                   <button
                     onClick={() => handleSubmit(false)}
-                    className="flex-1 py-4 border-none rounded-lg text-lg font-semibold text-white bg-blue-700 hover:bg-blue-800 hover:-translate-y-0.5 transition-all"
+                    disabled={isSubmitting}
+                    className="flex-1 py-4 border-none rounded-lg text-lg font-semibold text-white bg-blue-700 hover:bg-blue-800 hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 flex items-center justify-center gap-2"
                   >
-                    Save & Next
+                    {isSubmitting ? (
+                      <>
+                        <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Saving...
+                      </>
+                    ) : (
+                      <>Save & Next</>
+                    )}
                   </button>
                 )}
               </div>
