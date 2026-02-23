@@ -24,11 +24,13 @@ CREATE INDEX IF NOT EXISTS updates_garden_idx ON public.updates(garden);
 -- Create index on created_at for sorting
 CREATE INDEX IF NOT EXISTS updates_created_at_idx ON public.updates(created_at DESC);
 
+/*
 -- Create a storage bucket for media files
 -- Note: This requires the storage extension to be enabled
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('media', 'media', true)
 ON CONFLICT (id) DO NOTHING;
+*/
 
 -- Set up Row Level Security (RLS) policies
 ALTER TABLE public.updates ENABLE ROW LEVEL SECURITY;
@@ -58,6 +60,7 @@ CREATE POLICY "Allow public delete access"
   TO public
   USING (true);
 
+/*
 -- Set up storage policies for media bucket
 CREATE POLICY "Allow public upload to media"
   ON storage.objects FOR INSERT
@@ -73,6 +76,7 @@ CREATE POLICY "Allow public delete from media"
   ON storage.objects FOR DELETE
   TO public
   USING (bucket_id = 'media');
+*/
 
 -- =====================================================
 -- NOTES:

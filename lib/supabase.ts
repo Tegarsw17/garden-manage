@@ -216,21 +216,44 @@ export async function deleteUpdate(id: number): Promise<boolean> {
   return true
 }
 
-// Upload multiple media files
+// Upload multiple media files to Cloudinary
 export async function uploadMediaArray(files: File[]): Promise<string[]> {
   const urls: string[] = []
+  const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME
+  const uploadPreset = process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET
+
+  if (!cloudName || !uploadPreset) {
+    console.error('Missing Cloudinary environment variables. Please check your .env.local file.')
+    console.error('Required: NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME and NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET')
+    return []
+  }
+
   for (const file of files) {
-    const fileExt = file.name.split('.').pop()
-    const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`
-    const filePath = `${fileName}`
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('upload_preset', uploadPreset)
 
-    const { error } = await supabase.storage.from('media').upload(filePath, file)
+    try {
+      const response = await fetch(
+        `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+        {
+          method: 'POST',
+          body: formData,
+        }
+      )
+      
+      if (!response.ok) {
+        const errorData = await response.json()
+        console.error('Cloudinary upload error:', errorData)
+        continue
+      }
 
-    if (error) {
-      console.error('Error uploading file:', error)
-    } else {
-      const { data: urlData } = await supabase.storage.from('media').getPublicUrl(filePath)
-      urls.push(urlData.publicUrl)
+      const data = await response.json()
+      if (data.secure_url) {
+        urls.push(data.secure_url)
+      }
+    } catch (error) {
+      console.error('Error uploading to Cloudinary:', error)
     }
   }
 
@@ -239,20 +262,8 @@ export async function uploadMediaArray(files: File[]): Promise<string[]> {
 
 // Upload single media file (for backwards compatibility)
 export async function uploadMedia(file: File): Promise<string | null> {
-  const fileExt = file.name.split('.').pop()
-  const fileName = `${Date.now()}.${fileExt}`
-  const filePath = `${fileName}`
-
-  const { error } = await supabase.storage.from('media').upload(filePath, file)
-
-  if (error) {
-    console.error('Error uploading file:', error)
-    return null
-  }
-
-  const { data: urlData } = await supabase.storage.from('media').getPublicUrl(filePath)
-
-  return urlData?.publicUrl || ''
+  const urls = await uploadMediaArray([file])
+  return urls.length > 0 ? urls[0] : null
 }
 
 // =====================================================

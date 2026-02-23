@@ -39,7 +39,6 @@ A Next.js garden monitoring application for tracking plant health, watering sche
 2. Open `supabase/schema.sql` from this project
 3. Run the SQL script to create:
    - The `updates` table
-   - Storage bucket for media files
    - Row Level Security policies
 
 ### 4. Configure Environment Variables
@@ -49,15 +48,21 @@ A Next.js garden monitoring application for tracking plant health, watering sche
    cp .env.local.example .env.local
    ```
 
-2. Get your Supabase credentials:
-   - Go to **Project Settings** → **API**
-   - Copy your **Project URL** to `NEXT_PUBLIC_SUPABASE_URL`
-   - Copy your **anon/public key** to `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+2. Get your credentials:
+   - **Supabase**: Go to **Project Settings** → **API**
+     - Copy your **Project URL** to `NEXT_PUBLIC_SUPABASE_URL`
+     - Copy your **anon/public key** to `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - **Cloudinary**: Create an account at [cloudinary.com](https://cloudinary.com)
+     - Enable **Unsigned Uploads** in Settings → Upload → Upload presets
+     - Copy your **Cloud Name** to `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME`
+     - Copy your **Upload Preset** name to `NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET`
 
 3. Your `.env.local` should look like:
    ```env
    NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
    NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
+   NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME=your-cloud-name
+   NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET=your-upload-preset
    ```
 
 ### 5. Install Dependencies

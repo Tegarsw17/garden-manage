@@ -145,6 +145,7 @@ export default function Home() {
     setView('dashboard')
     setIsSelecting(false)
     setSelectedIds(new Set())
+    loadGardensAndPlants()
   }
 
   // Modal handlers
