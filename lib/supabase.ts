@@ -60,6 +60,79 @@ export interface Condition {
   updated_at?: string
 }
 
+interface NamedRelationRecord {
+  name: string
+}
+
+type JoinedNameRelation = NamedRelationRecord | NamedRelationRecord[] | null
+
+interface UpdateRow {
+  id?: number
+  garden: string
+  type: string
+  plant_id: string
+  desc: string
+  media?: string | null
+  media_type?: string | null
+  media_new?: string[] | null
+  media_type_new?: string[] | null
+  condition_ids?: unknown
+  date: string
+  created_at?: string
+}
+
+interface UpdateWriteRow {
+  garden?: string
+  type?: string
+  plant_id?: string
+  desc?: string
+  media_new?: string[]
+  media_type_new?: string[]
+  condition_ids?: number[]
+  date?: string
+}
+
+interface PlantRow {
+  id?: number
+  garden_id: number
+  plant_type_id: number
+  plant_name: string
+  created_at?: string
+  gardens?: JoinedNameRelation
+  plant_types?: JoinedNameRelation
+}
+
+interface PlantWriteRow {
+  garden_id?: number
+  plant_type_id?: number
+  plant_name?: string
+}
+
+interface ConditionRow {
+  id?: number
+  name: string
+  slug: string
+  color: string
+  icon: string
+  display_order: number
+  is_active: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+interface ConditionWriteRow {
+  name?: string
+  slug?: string
+  color?: string
+  icon?: string
+  display_order?: number
+  is_active?: boolean
+}
+
+interface CloudinaryUploadResponse {
+  secure_url?: string
+}
+
 // Garden data configuration
 export const PLANT_COUNT = 10
 
@@ -93,6 +166,75 @@ export const GARDEN_DATA: Record<string, Record<string, string[]>> = {
   },
 }
 
+const normalizeStringArray = (value: string | string[] | null | undefined): string[] => {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === 'string' && item.length > 0)
+  }
+
+  return typeof value === 'string' && value.length > 0 ? [value] : []
+}
+
+const normalizeConditionIds = (value: unknown): number[] => {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value.filter((item): item is number => typeof item === 'number')
+}
+
+const hasNameRecord = (value: unknown): value is NamedRelationRecord => {
+  if (typeof value !== 'object' || value === null || !('name' in value)) {
+    return false
+  }
+
+  return typeof value.name === 'string'
+}
+
+const extractName = (value: JoinedNameRelation | undefined): string | undefined => {
+  if (!value) return undefined
+
+  if (Array.isArray(value)) {
+    return value.find(hasNameRecord)?.name
+  }
+
+  return hasNameRecord(value) ? value.name : undefined
+}
+
+const toGardenUpdate = (item: UpdateRow): GardenUpdate => ({
+  id: item.id,
+  garden: item.garden,
+  type: item.type,
+  plantId: item.plant_id,
+  desc: item.desc,
+  media: normalizeStringArray(item.media_new ?? item.media),
+  mediaType: normalizeStringArray(item.media_type_new ?? item.media_type),
+  conditionIds: normalizeConditionIds(item.condition_ids),
+  date: item.date,
+  created_at: item.created_at,
+})
+
+const toPlant = (item: PlantRow): Plant => ({
+  id: item.id,
+  gardenId: item.garden_id,
+  plantTypeId: item.plant_type_id,
+  plantName: item.plant_name,
+  gardenName: extractName(item.gardens),
+  plantTypeName: extractName(item.plant_types),
+  created_at: item.created_at,
+})
+
+const toCondition = (item: ConditionRow): Condition => ({
+  id: item.id,
+  name: item.name,
+  slug: item.slug,
+  color: item.color,
+  icon: item.icon,
+  displayOrder: item.display_order,
+  isActive: item.is_active,
+  created_at: item.created_at,
+  updated_at: item.updated_at,
+})
+
 // Database functions
 export async function getUpdates(garden?: string): Promise<GardenUpdate[]> {
   let query = supabase.from('updates').select('*').order('created_at', { ascending: false })
@@ -108,46 +250,18 @@ export async function getUpdates(garden?: string): Promise<GardenUpdate[]> {
     return []
   }
 
-  // Map snake_case to camelCase
-  return (data || []).map(item => {
-    // Handle media from both old (media) and new (media_new) columns
-    // New format from migration has JSONB arrays, old format has strings
-    const mediaValue = item.media_new || item.media
-    const mediaTypeValue = item.media_type_new || item.media_type
-
-    // Normalize: ensure array format for multiple media support
-    // If it's already an array, use it; if it's a single string, wrap in array
-    const normalizedMedia = Array.isArray(mediaValue)
-      ? mediaValue
-      : (mediaValue ? [mediaValue] : [])
-
-    const normalizedMediaType = Array.isArray(mediaTypeValue)
-      ? mediaTypeValue
-      : (mediaTypeValue ? [mediaTypeValue] : [])
-
-    return {
-      ...item,
-      plantId: item.plant_id,
-      media: normalizedMedia,
-      mediaType: normalizedMediaType,
-      // Only use condition_ids now (condition_id was dropped)
-      conditionIds: item.condition_ids || [],
-    }
-  }) as GardenUpdate[]
+  return ((data || []) as UpdateRow[]).map(toGardenUpdate)
 }
 
 export async function createUpdate(update: GardenUpdate): Promise<GardenUpdate | null> {
   try {
-    // Map camelCase to snake_case for database columns
-    const dbData: any = {
+    const dbData: UpdateWriteRow = {
       garden: update.garden,
       type: update.type,
       plant_id: update.plantId,
       desc: update.desc,
       date: update.date,
       condition_ids: update.conditionIds || [],
-      // Use new array columns for multiple media support
-      // Convert single string to array for database
       media_new: Array.isArray(update.media) ? update.media : (update.media ? [update.media] : []),
       media_type_new: Array.isArray(update.mediaType) ? update.mediaType : (update.mediaType ? [update.mediaType] : []),
     }
@@ -162,14 +276,8 @@ export async function createUpdate(update: GardenUpdate): Promise<GardenUpdate |
       return null
     }
 
-    // Map snake_case back to camelCase for response
-    return data && data.length > 0 ? {
-      ...data[0],
-      plantId: data[0].plant_id,
-      media: data[0].media_new || [],
-      mediaType: data[0].media_type_new || [],
-      conditionIds: data[0].condition_ids || [],
-    } as GardenUpdate : null
+    const rows = (data || []) as UpdateRow[]
+    return rows.length > 0 ? toGardenUpdate(rows[0]) : null
   } catch (err) {
     console.error('Unexpected error creating update:', err)
     return null
@@ -177,8 +285,7 @@ export async function createUpdate(update: GardenUpdate): Promise<GardenUpdate |
 }
 
 export async function updateUpdate(id: number, update: Partial<GardenUpdate>): Promise<GardenUpdate | null> {
-  // Map camelCase to snake_case for database
-  const dbData: any = {}
+  const dbData: UpdateWriteRow = {}
   if (update.garden !== undefined) dbData.garden = update.garden
   if (update.type !== undefined) dbData.type = update.type
   if (update.plantId !== undefined) dbData.plant_id = update.plantId
@@ -195,14 +302,8 @@ export async function updateUpdate(id: number, update: Partial<GardenUpdate>): P
     return null
   }
 
-  // Map snake_case to camelCase
-  return data && data.length > 0 ? {
-    ...data[0],
-    plantId: data[0].plant_id,
-    media: data[0].media_new || [],
-    mediaType: data[0].media_type_new || [],
-    conditionIds: data[0].condition_ids || [],
-  } as GardenUpdate : null
+  const rows = (data || []) as UpdateRow[]
+  return rows.length > 0 ? toGardenUpdate(rows[0]) : null
 }
 
 export async function deleteUpdate(id: number): Promise<boolean> {
@@ -243,12 +344,12 @@ export async function uploadMediaArray(files: File[]): Promise<string[]> {
       )
       
       if (!response.ok) {
-        const errorData = await response.json()
+        const errorData: unknown = await response.json()
         console.error('Cloudinary upload error:', errorData)
         continue
       }
 
-      const data = await response.json()
+      const data = await response.json() as CloudinaryUploadResponse
       if (data.secure_url) {
         urls.push(data.secure_url)
       }
@@ -334,15 +435,6 @@ export async function createPlantType(name: string): Promise<PlantType | null> {
 // PLANTS CRUD
 // =====================================================
 
-// Helper to extract name from Supabase JOIN response (could be array or object)
-const extractName = (value: any): string | undefined => {
-  if (!value) return undefined
-  if (Array.isArray(value)) {
-    return value[0]?.name
-  }
-  return value.name
-}
-
 export async function getPlants(): Promise<Plant[]> {
   const { data, error } = await supabase
     .from('plants')
@@ -362,16 +454,7 @@ export async function getPlants(): Promise<Plant[]> {
     return []
   }
 
-  // Map database response to Plant interface
-  return (data || []).map((item: any) => ({
-    id: item.id,
-    gardenId: item.garden_id,
-    plantTypeId: item.plant_type_id,
-    plantName: item.plant_name,
-    gardenName: extractName(item.gardens),
-    plantTypeName: extractName(item.plant_types),
-    created_at: item.created_at,
-  }))
+  return ((data || []) as PlantRow[]).map(toPlant)
 }
 
 export async function getPlantsByGarden(gardenId: number): Promise<Plant[]> {
@@ -394,15 +477,7 @@ export async function getPlantsByGarden(gardenId: number): Promise<Plant[]> {
     return []
   }
 
-  return (data || []).map((item: any) => ({
-    id: item.id,
-    gardenId: item.garden_id,
-    plantTypeId: item.plant_type_id,
-    plantName: item.plant_name,
-    gardenName: extractName(item.gardens),
-    plantTypeName: extractName(item.plant_types),
-    created_at: item.created_at,
-  }))
+  return ((data || []) as PlantRow[]).map(toPlant)
 }
 
 export async function createPlant(plant: Omit<Plant, 'id' | 'gardenName' | 'plantTypeName' | 'created_at'>): Promise<Plant | null> {
@@ -428,24 +503,12 @@ export async function createPlant(plant: Omit<Plant, 'id' | 'gardenName' | 'plan
     return null
   }
 
-  if (data && data.length > 0) {
-    const item = data[0]
-    return {
-      id: item.id,
-      gardenId: item.garden_id,
-      plantTypeId: item.plant_type_id,
-      plantName: item.plant_name,
-      gardenName: extractName(item.gardens),
-      plantTypeName: extractName(item.plant_types),
-      created_at: item.created_at,
-    }
-  }
-
-  return null
+  const rows = (data || []) as PlantRow[]
+  return rows.length > 0 ? toPlant(rows[0]) : null
 }
 
 export async function updatePlant(id: number, plant: Partial<Omit<Plant, 'id' | 'gardenName' | 'plantTypeName' | 'created_at'>>): Promise<Plant | null> {
-  const dbData: any = {}
+  const dbData: PlantWriteRow = {}
   if (plant.gardenId !== undefined) dbData.garden_id = plant.gardenId
   if (plant.plantTypeId !== undefined) dbData.plant_type_id = plant.plantTypeId
   if (plant.plantName !== undefined) dbData.plant_name = plant.plantName
@@ -469,20 +532,8 @@ export async function updatePlant(id: number, plant: Partial<Omit<Plant, 'id' | 
     return null
   }
 
-  if (data && data.length > 0) {
-    const item = data[0]
-    return {
-      id: item.id,
-      gardenId: item.garden_id,
-      plantTypeId: item.plant_type_id,
-      plantName: item.plant_name,
-      gardenName: extractName(item.gardens),
-      plantTypeName: extractName(item.plant_types),
-      created_at: item.created_at,
-    }
-  }
-
-  return null
+  const rows = (data || []) as PlantRow[]
+  return rows.length > 0 ? toPlant(rows[0]) : null
 }
 
 export async function deletePlant(id: number): Promise<boolean> {
@@ -520,18 +571,7 @@ export async function getConditions(activeOnly: boolean = false): Promise<Condit
     return []
   }
 
-  // Map snake_case to camelCase
-  return (data || []).map(item => ({
-    id: item.id,
-    name: item.name,
-    slug: item.slug,
-    color: item.color,
-    icon: item.icon,
-    displayOrder: item.display_order,
-    isActive: item.is_active,
-    created_at: item.created_at,
-    updated_at: item.updated_at,
-  })) as Condition[]
+  return ((data || []) as ConditionRow[]).map(toCondition)
 }
 
 export async function getConditionById(id: number): Promise<Condition | null> {
@@ -546,17 +586,7 @@ export async function getConditionById(id: number): Promise<Condition | null> {
     return null
   }
 
-  return {
-    id: data.id,
-    name: data.name,
-    slug: data.slug,
-    color: data.color,
-    icon: data.icon,
-    displayOrder: data.display_order,
-    isActive: data.is_active,
-    created_at: data.created_at,
-    updated_at: data.updated_at,
-  } as Condition
+  return toCondition(data as ConditionRow)
 }
 
 export async function getConditionBySlug(slug: string): Promise<Condition | null> {
@@ -571,21 +601,11 @@ export async function getConditionBySlug(slug: string): Promise<Condition | null
     return null
   }
 
-  return {
-    id: data.id,
-    name: data.name,
-    slug: data.slug,
-    color: data.color,
-    icon: data.icon,
-    displayOrder: data.display_order,
-    isActive: data.is_active,
-    created_at: data.created_at,
-    updated_at: data.updated_at,
-  } as Condition
+  return toCondition(data as ConditionRow)
 }
 
 export async function createCondition(condition: Omit<Condition, 'id' | 'created_at' | 'updated_at'>): Promise<Condition | null> {
-  const dbData = {
+  const dbData: ConditionWriteRow = {
     name: condition.name,
     slug: condition.slug,
     color: condition.color,
@@ -605,21 +625,11 @@ export async function createCondition(condition: Omit<Condition, 'id' | 'created
     return null
   }
 
-  return {
-    id: data.id,
-    name: data.name,
-    slug: data.slug,
-    color: data.color,
-    icon: data.icon,
-    displayOrder: data.display_order,
-    isActive: data.is_active,
-    created_at: data.created_at,
-    updated_at: data.updated_at,
-  } as Condition
+  return toCondition(data as ConditionRow)
 }
 
 export async function updateCondition(id: number, condition: Partial<Omit<Condition, 'id' | 'created_at' | 'updated_at'>>): Promise<Condition | null> {
-  const dbData: any = {}
+  const dbData: ConditionWriteRow = {}
   if (condition.name !== undefined) dbData.name = condition.name
   if (condition.slug !== undefined) dbData.slug = condition.slug
   if (condition.color !== undefined) dbData.color = condition.color
@@ -639,17 +649,7 @@ export async function updateCondition(id: number, condition: Partial<Omit<Condit
     return null
   }
 
-  return {
-    id: data.id,
-    name: data.name,
-    slug: data.slug,
-    color: data.color,
-    icon: data.icon,
-    displayOrder: data.display_order,
-    isActive: data.is_active,
-    created_at: data.created_at,
-    updated_at: data.updated_at,
-  } as Condition
+  return toCondition(data as ConditionRow)
 }
 
 export async function deleteCondition(id: number): Promise<boolean> {
