@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Calendar, Edit, Trash2, Share2, X, Plus, Mic, Camera, ChevronDown } from 'lucide-react'
-import { supabase, type GardenUpdate, type Garden, type Plant, type Condition, getGardens, getPlants, getPlantsByGarden, getUpdates, getConditions, createUpdate, updateUpdate, deleteUpdate, uploadMediaArray } from '@/lib/supabase'
+import { Calendar, Edit, Trash2, Share2, X } from 'lucide-react'
+import { type GardenUpdate, type Garden, type Plant, type Condition, getGardens, getPlants, getUpdates, getConditions, createUpdate, updateUpdate, deleteUpdate, uploadMediaArray } from '@/lib/supabase'
 import Link from 'next/link'
 
 function formatDate(date: string | Date): string {
@@ -16,9 +16,6 @@ export default function DashboardPage() {
   const [plants, setPlants] = useState<Plant[]>([])
   const [updates, setUpdates] = useState<GardenUpdate[]>([])
   const [conditions, setConditions] = useState<Condition[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [sortField, setSortField] = useState<'date' | 'plantName' | 'garden' | 'condition'>('date')
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
 
   // Detail modal state
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
@@ -52,7 +49,6 @@ export default function DashboardPage() {
   // Load initial data
   useEffect(() => {
     const loadData = async () => {
-      setIsLoading(true)
       const [gardensData, plantsData, updatesData, conditionsData] = await Promise.all([
         getGardens(),
         getPlants(),
@@ -63,10 +59,9 @@ export default function DashboardPage() {
       setPlants(plantsData)
       setUpdates(updatesData)
       setConditions(conditionsData)
-      setIsLoading(false)
     }
 
-    loadData()
+    void loadData()
   }, [])
 
   // Reset to page 1 when filters change
@@ -101,28 +96,9 @@ export default function DashboardPage() {
   })
 
   // Apply sorting
-  const sortedUpdates = [...filteredUpdates].sort((a, b) => {
-    let comparison = 0
-    switch (sortField) {
-      case 'date':
-        comparison = new Date(a.date).getTime() - new Date(b.date).getTime()
-        break
-    case 'plantName':
-        comparison = a.plantId.localeCompare(b.plantId)
-        break
-      case 'garden':
-        comparison = a.garden.localeCompare(b.garden)
-        break
-      case 'condition':
-        comparison = a.plantId.localeCompare(b.plantId)
-        break
-      default:
-        comparison = a.plantId.localeCompare(b.plantId)
-        break
-    }
-
-    return sortOrder === 'asc' ? comparison : -comparison
-  })
+  const sortedUpdates = [...filteredUpdates].sort(
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+  )
 
   // Calculate pagination
   const totalPages = Math.ceil(sortedUpdates.length / itemsPerPage)

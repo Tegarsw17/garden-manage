@@ -1,8 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { supabase, type Condition, getConditions, createCondition, updateCondition, deleteCondition } from '@/lib/supabase'
-import { Plus, Edit, Trash2, Check, X, Eye, EyeOff } from 'lucide-react'
+import { type Condition, getConditions, createCondition, updateCondition, deleteCondition } from '@/lib/supabase'
+import { Plus, Edit, Trash2, X, Eye, EyeOff } from 'lucide-react'
 import Link from 'next/link'
 
 export default function ConditionsPage() {
@@ -25,12 +25,28 @@ export default function ConditionsPage() {
 
   const [toast, setToast] = useState<{ show: boolean; message: string; type: 'success' | 'error' }>({ show: false, message: '', type: 'success' })
 
-  // Load conditions
   useEffect(() => {
-    loadConditions()
+    let isCancelled = false
+
+    async function run() {
+      setIsLoading(true)
+      const data = await getConditions(!showInactive)
+      if (isCancelled) {
+        return
+      }
+
+      setConditions(data)
+      setIsLoading(false)
+    }
+
+    void run()
+
+    return () => {
+      isCancelled = true
+    }
   }, [showInactive])
 
-  const loadConditions = async () => {
+  async function loadConditions() {
     setIsLoading(true)
     const data = await getConditions(!showInactive)
     setConditions(data)
@@ -76,18 +92,17 @@ export default function ConditionsPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    if (!formData.name.trim() || !formData.slug.trim()) {
-      showToast('Name and slug are required', 'error')
+    if (!formData.name.trim()) {
+      showToast('Name is required', 'error')
       return
     }
 
-    // Generate slug from name if empty
     let slug = formData.slug.trim()
     if (!slug && formData.name.trim()) {
       slug = formData.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
     }
 
-    const submitData = {
+    const submitData: Omit<Condition, 'id' | 'created_at' | 'updated_at'> = {
       ...formData,
       slug,
       name: formData.name.trim(),
@@ -99,7 +114,7 @@ export default function ConditionsPage() {
       success = result !== null
       showToast(success ? 'Condition updated!' : 'Failed to update condition', success ? 'success' : 'error')
     } else {
-      const result = await createCondition(submitData as Condition)
+      const result = await createCondition(submitData)
       success = result !== null
       showToast(success ? 'Condition created!' : 'Failed to create condition', success ? 'success' : 'error')
     }
@@ -193,7 +208,7 @@ export default function ConditionsPage() {
         ) : conditions.length === 0 ? (
           <div className="text-center py-16 bg-white rounded-2xl shadow-md">
             <h3 className="text-lg mb-2">No conditions found</h3>
-            <p className="text-gray-500">Click "Add New Condition" to get started.</p>
+            <p className="text-gray-500">Click &quot;Add New Condition&quot; to get started.</p>
           </div>
         ) : (
           <div className="space-y-4">

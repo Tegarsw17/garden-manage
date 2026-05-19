@@ -1,16 +1,212 @@
 'use client'
 
-import { useEffect, useState, useRef, MouseEvent } from 'react'
-import { supabase, type GardenUpdate, type Garden, type Plant, type Condition, getGardens, getPlants, getPlantsByGarden, getUpdates, getConditions, createUpdate, updateUpdate, deleteUpdate, uploadMedia, uploadMediaArray } from '@/lib/supabase'
-import { Share2, Edit, Trash2, Plus, X, Mic, Camera, Leaf, MoreVertical } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { type GardenUpdate, type Garden, type Plant, type Condition, getGardens, getPlants, getPlantsByGarden, getUpdates, getConditions, createUpdate, updateUpdate, deleteUpdate, uploadMedia } from '@/lib/supabase'
+import { Share2, Edit, Trash2, Plus, X, Mic, Leaf, MoreVertical, LoaderCircle, CircleCheck, CircleX } from 'lucide-react'
 import Link from 'next/link'
 
 declare global {
   interface Window {
-    jspdf: {
-      jsPDF: any
+    SpeechRecognition?: SpeechRecognitionConstructor
+    webkitSpeechRecognition?: SpeechRecognitionConstructor
+  }
+}
+
+type FormField = 'type' | 'plantId' | 'desc'
+
+type DraftAttachment =
+  | {
+      id: string
+      kind: 'local'
+      file: File
+      previewUrl: string
+      type: string
+    }
+  | {
+      id: string
+      kind: 'remote'
+      url: string
+      type: string
+    }
+
+type QueueAttachment =
+  | {
+      kind: 'local'
+      file: File
+      type: string
+    }
+  | {
+      kind: 'remote'
+      url: string
+      type: string
+    }
+
+type SubmissionJobStatus = 'queued' | 'uploading' | 'saving' | 'success' | 'error'
+
+type SubmissionJob = {
+  id: string
+  gardenName: string
+  plantName: string
+  plantType: string
+  description: string
+  conditionIds: number[]
+  date: string
+  attachments: QueueAttachment[]
+  uploadTargetCount: number
+  uploadedCount: number
+  status: SubmissionJobStatus
+  errorMessage?: string
+}
+
+type UploadedMediaResult = {
+  urls: string[]
+  types: string[]
+}
+
+interface SpeechRecognitionAlternativeLike {
+  transcript: string
+}
+
+type SpeechRecognitionResultLike = ArrayLike<SpeechRecognitionAlternativeLike>
+
+interface SpeechRecognitionEventLike {
+  results: ArrayLike<SpeechRecognitionResultLike>
+}
+
+interface SpeechRecognitionLike {
+  continuous: boolean
+  interimResults: boolean
+  lang: string
+  onstart: (() => void) | null
+  onend: (() => void) | null
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null
+  start: () => void
+  stop: () => void
+}
+
+interface SpeechRecognitionConstructor {
+  new (): SpeechRecognitionLike
+}
+
+const getSpeechRecognitionConstructor = () => {
+  if (typeof window === 'undefined') {
+    return undefined
+  }
+
+  return window.SpeechRecognition ?? window.webkitSpeechRecognition
+}
+
+const createAttachmentId = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function buildDraftAttachments(files: File[]): DraftAttachment[] {
+  return files.map((file) => ({
+    id: createAttachmentId(),
+    kind: 'local',
+    file,
+    previewUrl: URL.createObjectURL(file),
+    type: file.type,
+  }))
+}
+
+function toQueueAttachments(attachments: DraftAttachment[]): QueueAttachment[] {
+  return attachments.map((attachment) =>
+    attachment.kind === 'local'
+      ? {
+          kind: 'local',
+          file: attachment.file,
+          type: attachment.type,
+        }
+      : {
+          kind: 'remote',
+          url: attachment.url,
+          type: attachment.type,
+        }
+  )
+}
+
+function revokeAttachmentPreview(attachment: DraftAttachment) {
+  if (attachment.kind === 'local') {
+    URL.revokeObjectURL(attachment.previewUrl)
+  }
+}
+
+function revokeAttachmentPreviews(attachments: DraftAttachment[]) {
+  attachments.forEach(revokeAttachmentPreview)
+}
+
+function getAttachmentPreviewSource(attachment: DraftAttachment) {
+  return attachment.kind === 'local' ? attachment.previewUrl : attachment.url
+}
+
+function getUploadTargetCount(attachments: QueueAttachment[]) {
+  return attachments.filter((attachment) => attachment.kind === 'local').length
+}
+
+async function uploadReportAttachments(
+  attachments: QueueAttachment[],
+  onProgress?: (uploadedCount: number, totalCount: number) => void
+): Promise<UploadedMediaResult> {
+  const urls: string[] = []
+  const types: string[] = []
+  const totalCount = getUploadTargetCount(attachments)
+  let uploadedCount = 0
+
+  for (const attachment of attachments) {
+    if (attachment.kind === 'remote') {
+      urls.push(attachment.url)
+      types.push(attachment.type)
+      continue
+    }
+
+    const uploadedUrl = await uploadMedia(attachment.file)
+    if (!uploadedUrl) {
+      throw new Error(`Failed to upload media ${uploadedCount + 1} of ${totalCount}`)
+    }
+
+    uploadedCount += 1
+    urls.push(uploadedUrl)
+    types.push(attachment.type)
+    onProgress?.(uploadedCount, totalCount)
+  }
+
+  return { urls, types }
+}
+
+function describeJobStatus(job: SubmissionJob) {
+  if (job.status === 'queued' || job.status === 'uploading' || job.status === 'saving') {
+    return 'Uploading'
+  }
+
+  if (job.status === 'success') {
+    return 'Finished'
+  }
+
+  return 'Failed'
+}
+
+async function loadGardenFeedData(garden: Garden): Promise<{
+  plantsData: Plant[]
+  updatesData: GardenUpdate[]
+}> {
+  if (!garden.id) {
+    return {
+      plantsData: [],
+      updatesData: [],
     }
   }
+
+  const [updatesData, plantsData] = await Promise.all([
+    getUpdates(garden.name),
+    getPlantsByGarden(garden.id),
+  ])
+
+  return { plantsData, updatesData }
 }
 
 export default function Home() {
@@ -31,6 +227,7 @@ export default function Home() {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
   const [selectedUpdate, setSelectedUpdate] = useState<GardenUpdate | null>(null)
   const [conditions, setConditions] = useState<Condition[]>([])
+  const [submissionJobs, setSubmissionJobs] = useState<SubmissionJob[]>([])
 
   // Form state
   const [formData, setFormData] = useState({
@@ -39,86 +236,233 @@ export default function Home() {
     desc: '',
     conditionIds: [] as number[],
   })
-  const [mediaFiles, setMediaFiles] = useState<{ data: string; type: string }[]>([])
-  const [mediaUrls, setMediaUrls] = useState<string[]>([])
+  const [mediaFiles, setMediaFiles] = useState<DraftAttachment[]>([])
   const [isListening, setIsListening] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   // Speech recognition
-  const recognitionRef = useRef<any>(null)
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
+  const processingJobIdRef = useRef<string | null>(null)
+  const submissionJobsRef = useRef<SubmissionJob[]>([])
+  const activeGardenRef = useRef<Garden | null>(null)
 
   // Initialize speech recognition and load initial data
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
-      if (SpeechRecognition) {
-        recognitionRef.current = new SpeechRecognition()
-        // merekam kalimat panjang tnapa henti
-        recognitionRef.current.continuous = false
-        // teks muncul saat user masih bicara
-        recognitionRef.current.interimResults = false
-        recognitionRef.current.lang = 'id-ID'
+    const SpeechRecognition = getSpeechRecognitionConstructor()
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition()
+      recognition.continuous = false
+      recognition.interimResults = false
+      recognition.lang = 'id-ID'
 
-        recognitionRef.current.onstart = () => setIsListening(true)
-        recognitionRef.current.onend = () => setIsListening(false)
-        recognitionRef.current.onresult = (event: any) => {
-          const transcript = event.results[0][0].transcript
-          setFormData(prev => ({
-            ...prev,
-            desc: prev.desc ? prev.desc + ' ' + transcript : transcript
-          }))
+      recognition.onstart = () => setIsListening(true)
+      recognition.onend = () => setIsListening(false)
+      recognition.onresult = (event) => {
+        const transcript = event.results[0]?.[0]?.transcript
+        if (!transcript) {
+          return
         }
+
+        setFormData((prev) => ({
+          ...prev,
+          desc: prev.desc ? `${prev.desc} ${transcript}` : transcript,
+        }))
       }
+
+      recognitionRef.current = recognition
     }
 
-    // Load gardens, plants, and conditions on mount
-    loadGardensAndPlants()
-    loadConditions()
+    void loadGardensAndPlants()
+    void loadConditions()
   }, [])
+
+  useEffect(() => {
+    activeGardenRef.current = activeGarden
+  }, [activeGarden])
 
   // Load updates when active garden changes
   useEffect(() => {
-    if (activeGarden) {
-      loadUpdates()
-      loadPlantsForGarden(activeGarden.id!)
+    if (!activeGarden) {
+      return
+    }
+
+    const garden = activeGarden
+    let isCancelled = false
+
+    async function run() {
+      setIsLoading(true)
+      const { plantsData, updatesData } = await loadGardenFeedData(garden)
+      if (isCancelled) {
+        return
+      }
+
+      setPlants(plantsData)
+      setUpdates(updatesData)
+      setIsLoading(false)
+    }
+
+    void run()
+
+    return () => {
+      isCancelled = true
     }
   }, [activeGarden])
 
   // Close menu when clicking outside
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
+    const handleClickOutside = (event: globalThis.MouseEvent) => {
       const target = event.target as HTMLElement
       if (!target.closest('.menu-container')) {
         setOpenMenuId(null)
       }
     }
-    document.addEventListener('mousedown', handleClickOutside as any)
-    return () => document.removeEventListener('mousedown', handleClickOutside as any)
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  const loadGardensAndPlants = async () => {
+  async function loadGardensAndPlants() {
     const gardensData = await getGardens()
     const plantsData = await getPlants()
     setGardens(gardensData)
     setPlants(plantsData)
   }
 
-  const loadConditions = async () => {
+  async function loadConditions() {
     const conditionsData = await getConditions(true) // Only active conditions
     setConditions(conditionsData)
   }
 
-  const loadPlantsForGarden = async (gardenId: number) => {
-    const plantsData = await getPlantsByGarden(gardenId)
-    setPlants(plantsData)
+  const setSubmissionJobsState = (
+    nextJobs:
+      | SubmissionJob[]
+      | ((previousJobs: SubmissionJob[]) => SubmissionJob[])
+  ) => {
+    const resolvedJobs =
+      typeof nextJobs === 'function'
+        ? nextJobs(submissionJobsRef.current)
+        : nextJobs
+
+    submissionJobsRef.current = resolvedJobs
+    setSubmissionJobs(resolvedJobs)
   }
 
-  const loadUpdates = async () => {
-    if (!activeGarden) return
-    setIsLoading(true)
-    const data = await getUpdates(activeGarden.name)
-    setUpdates(data)
-    setIsLoading(false)
+  const updateSubmissionJob = (
+    jobId: string,
+    updater: (job: SubmissionJob) => SubmissionJob
+  ) => {
+    setSubmissionJobsState((previousJobs) =>
+      previousJobs.map((job) => (job.id === jobId ? updater(job) : job))
+    )
+  }
+
+  const dismissSubmissionJob = (jobId: string) => {
+    setSubmissionJobsState((previousJobs) =>
+      previousJobs.filter((job) => job.id !== jobId)
+    )
+  }
+
+  const scheduleSubmissionDismiss = (jobId: string, delayMs: number = 4000) => {
+    setTimeout(() => {
+      const targetJob = submissionJobsRef.current.find((job) => job.id === jobId)
+      if (targetJob?.status === 'success') {
+        dismissSubmissionJob(jobId)
+      }
+    }, delayMs)
+  }
+
+  const processNextSubmissionJob = async () => {
+    if (processingJobIdRef.current) {
+      return
+    }
+
+    const nextJob = submissionJobsRef.current.find((job) => job.status === 'queued')
+    if (!nextJob) {
+      return
+    }
+
+    processingJobIdRef.current = nextJob.id
+    updateSubmissionJob(nextJob.id, (job) => ({
+      ...job,
+      status: job.uploadTargetCount > 0 ? 'uploading' : 'saving',
+      uploadedCount: 0,
+      errorMessage: undefined,
+    }))
+
+    try {
+      const uploadedMedia = await uploadReportAttachments(nextJob.attachments, (uploadedCount) => {
+        updateSubmissionJob(nextJob.id, (job) => ({
+          ...job,
+          status: uploadedCount < job.uploadTargetCount ? 'uploading' : 'saving',
+          uploadedCount,
+        }))
+      })
+
+      updateSubmissionJob(nextJob.id, (job) => ({
+        ...job,
+        status: 'saving',
+        uploadedCount: job.uploadTargetCount,
+      }))
+
+      const updateData: GardenUpdate = {
+        garden: nextJob.gardenName,
+        type: nextJob.plantType,
+        plantId: nextJob.plantName,
+        desc: nextJob.description,
+        media: uploadedMedia.urls,
+        mediaType: uploadedMedia.types,
+        conditionIds: nextJob.conditionIds,
+        date: nextJob.date,
+      }
+
+      const savedUpdate = await createUpdate(updateData)
+      if (!savedUpdate) {
+        throw new Error('Failed to save report to database')
+      }
+
+      updateSubmissionJob(nextJob.id, (job) => ({
+        ...job,
+        status: 'success',
+        uploadedCount: job.uploadTargetCount,
+      }))
+
+      if (activeGardenRef.current?.name === nextJob.gardenName) {
+        setUpdates((previousUpdates) => [
+          savedUpdate,
+          ...previousUpdates.filter((update) => update.id !== savedUpdate.id),
+        ])
+      }
+
+      scheduleSubmissionDismiss(nextJob.id)
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to upload report'
+
+      updateSubmissionJob(nextJob.id, (job) => ({
+        ...job,
+        status: 'error',
+        errorMessage: message,
+      }))
+    } finally {
+      processingJobIdRef.current = null
+      void processNextSubmissionJob()
+    }
+  }
+
+  const retrySubmissionJob = (jobId: string) => {
+    updateSubmissionJob(jobId, (job) => ({
+      ...job,
+      status: 'queued',
+      uploadedCount: 0,
+      errorMessage: undefined,
+    }))
+
+    void processNextSubmissionJob()
+  }
+
+  const enqueueSubmissionJob = (job: SubmissionJob) => {
+    setSubmissionJobsState((previousJobs) => [...previousJobs, job])
+    void processNextSubmissionJob()
   }
 
   // Get plant types for the current garden
@@ -145,7 +489,7 @@ export default function Home() {
     setView('dashboard')
     setIsSelecting(false)
     setSelectedIds(new Set())
-    loadGardensAndPlants()
+    void loadGardensAndPlants()
   }
 
   // Modal handlers
@@ -159,125 +503,135 @@ export default function Home() {
     resetForm()
   }
 
+  const clearDraftAttachments = () => {
+    revokeAttachmentPreviews(mediaFiles)
+    setMediaFiles([])
+  }
+
   const resetForm = () => {
     setFormData({ type: '', plantId: '', desc: '', conditionIds: [] })
-    setMediaFiles([])
-    setMediaUrls([])
+    clearDraftAttachments()
     setIsEditing(false)
     setEditId(null)
   }
 
   // Form handlers
-  const handleInputChange = (field: string, value: string) => {
-    setFormData(prev => ({ ...prev, [field]: value }))
-    if (field === 'type') {
-      setFormData(prev => ({ ...prev, plantId: '' }))
-    }
+  const handleInputChange = (field: FormField, value: string) => {
+    setFormData((prev) => {
+      if (field === 'type') {
+        return { ...prev, type: value, plantId: '' }
+      }
+
+      return { ...prev, [field]: value }
+    })
   }
 
   const handleMediaFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
     if (files.length > 0) {
-      // Read all files and wait for them to complete
-      const filePromises = files.map(file => {
-        return new Promise<{ data: string; type: string }>((resolve) => {
-          const reader = new FileReader()
-          reader.onload = (event) => {
-            const dataUrl = event.target?.result as string
-            resolve({ data: dataUrl, type: file.type })
-          }
-          reader.onerror = () => {
-            console.error('Error reading file:', file.name)
-            resolve({ data: '', type: file.type })
-          }
-          reader.readAsDataURL(file)
-        })
-      })
-
-      const newFiles = await Promise.all(filePromises)
-      setMediaFiles(prev => [...prev, ...newFiles.filter(f => f.data !== '')])
+      const newFiles = buildDraftAttachments(files)
+      setMediaFiles((prev) => [...prev, ...newFiles])
     }
+
+    e.target.value = ''
   }
 
   const toggleSpeech = () => {
     if (!recognitionRef.current) return
-    isListening ? recognitionRef.current.stop() : recognitionRef.current.start()
+    if (isListening) {
+      recognitionRef.current.stop()
+      return
+    }
+
+    recognitionRef.current.start()
   }
 
   const removeMediaFile = (index: number) => {
-    setMediaFiles(prev => prev.filter((_, i) => i !== index))
+    setMediaFiles((previousFiles) => {
+      const targetFile = previousFiles[index]
+      if (targetFile) {
+        revokeAttachmentPreview(targetFile)
+      }
+
+      return previousFiles.filter((_, fileIndex) => fileIndex !== index)
+    })
   }
 
   // Submit handlers
   const handleSubmit = async (shouldClose: boolean) => {
-    if (!activeGarden || !formData.plantId || !formData.desc || isSubmitting) return
+    if (!activeGarden || !formData.plantId || !formData.desc) {
+      return
+    }
+
+    const selectedPlant = plants.find((plant) => plant.id === Number(formData.plantId))
+    if (!selectedPlant) {
+      return
+    }
+
+    const reportDate = new Date().toLocaleString()
+    const queuedAttachments = toQueueAttachments(mediaFiles)
+
+    if (!isEditing) {
+      enqueueSubmissionJob({
+        id: createAttachmentId(),
+        gardenName: activeGarden.name,
+        plantName: selectedPlant.plantName,
+        plantType: selectedPlant.plantTypeName || '',
+        description: formData.desc,
+        conditionIds: formData.conditionIds,
+        date: reportDate,
+        attachments: queuedAttachments,
+        uploadTargetCount: getUploadTargetCount(queuedAttachments),
+        uploadedCount: 0,
+        status: 'queued',
+      })
+
+      showToast(
+        queuedAttachments.length > 0
+          ? `Uploading ${selectedPlant.plantName} in background`
+          : `Saving ${selectedPlant.plantName} in background`
+      )
+
+      if (shouldClose) {
+        closeModal()
+      } else {
+        revokeAttachmentPreviews(mediaFiles)
+        setFormData((prev) => ({ ...prev, plantId: '', desc: '', conditionIds: [] }))
+        setMediaFiles([])
+      }
+
+      return
+    }
+
+    if (isSubmitting || !editId) {
+      return
+    }
 
     setIsSubmitting(true)
 
     try {
-      // Find the selected plant
-      const selectedPlant = plants.find(p => p.id === Number(formData.plantId))
-      if (!selectedPlant) return
-
-      // Upload media files if present
-      const uploadedMediaUrls: string[] = []
-      const uploadedMediaTypes: string[] = []
-
-      for (const mediaFile of mediaFiles) {
-        if (mediaFile.data && mediaFile.data.startsWith('data:')) {
-          // Convert data URL to blob and upload to Supabase
-          try {
-            const base64Data = mediaFile.data.split(',')[1]
-            const byteCharacters = atob(base64Data)
-            const byteNumbers = new Array(byteCharacters.length)
-            for (let i = 0; i < byteCharacters.length; i++) {
-              byteNumbers[i] = byteCharacters.charCodeAt(i)
-            }
-            const byteArray = new Uint8Array(byteNumbers)
-            const blob = new Blob([byteArray], { type: mediaFile.type })
-            const file = new File([blob], `media.${mediaFile.type.split('/')[1]}`, { type: mediaFile.type })
-
-            const uploadedUrls = await uploadMediaArray([file])
-            if (uploadedUrls.length > 0) {
-              uploadedMediaUrls.push(uploadedUrls[0])
-              uploadedMediaTypes.push(mediaFile.type)
-            }
-          } catch (error) {
-            console.error('Upload error:', error)
-          }
-        } else if (mediaFile.data && !mediaFile.data.startsWith('data:')) {
-          // Existing URL - preserve it
-          uploadedMediaUrls.push(mediaFile.data)
-          uploadedMediaTypes.push(mediaFile.type)
-        }
-      }
+      const uploadedMedia = await uploadReportAttachments(queuedAttachments)
 
       const updateData: GardenUpdate = {
         garden: activeGarden.name,
         type: selectedPlant.plantTypeName || '',
         plantId: selectedPlant.plantName,
         desc: formData.desc,
-        media: uploadedMediaUrls,
-        mediaType: uploadedMediaTypes,
+        media: uploadedMedia.urls,
+        mediaType: uploadedMedia.types,
         conditionIds: formData.conditionIds,
-        date: new Date().toLocaleString(),
+        date: reportDate,
       }
 
-      if (isEditing && editId) {
-        await updateUpdate(editId, updateData)
-        showToast('Report updated!')
-      } else {
-        await createUpdate(updateData)
-        showToast(`Saved for ${selectedPlant.plantName}`)
-      }
+      await updateUpdate(editId, updateData)
+      showToast('Report updated!')
 
-      await loadUpdates()
+      const { plantsData, updatesData } = await loadGardenFeedData(activeGarden)
+      setPlants(plantsData)
+      setUpdates(updatesData)
 
       if (shouldClose) {
         closeModal()
-      } else {
-        setFormData(prev => ({ ...prev, plantId: '', desc: '', conditionIds: [] }))
-        setMediaFiles([])
       }
     } finally {
       setIsSubmitting(false)
@@ -296,15 +650,20 @@ export default function Home() {
     const existingMediaTypes = Array.isArray(update.mediaType) ? update.mediaType : (update.mediaType ? [update.mediaType] : [])
 
     // Load files from existing media URLs
-    const loadedFiles: { data: string; type: string }[] = []
+    const loadedFiles: DraftAttachment[] = []
     existingMediaUrls.forEach((url, i) => {
       if (url && url.startsWith && !url.startsWith('data:') && !url.startsWith('blob:')) {
-        // Use the first type or default to image/jpeg
         const type = existingMediaTypes[i] || 'image/jpeg'
-        loadedFiles.push({ data: url, type })
+        loadedFiles.push({
+          id: createAttachmentId(),
+          kind: 'remote',
+          url,
+          type,
+        })
       }
     })
 
+    revokeAttachmentPreviews(mediaFiles)
     setFormData({
       type: update.type,
       plantId: plant?.id?.toString() || '',
@@ -318,13 +677,17 @@ export default function Home() {
   const handleDelete = async (id: number) => {
     if (confirm('Delete this report?')) {
       await deleteUpdate(id)
-      await loadUpdates()
+      if (activeGarden) {
+        const { plantsData, updatesData } = await loadGardenFeedData(activeGarden)
+        setPlants(plantsData)
+        setUpdates(updatesData)
+      }
       showToast('Report deleted.')
     }
   }
 
   // Detail modal handlers
-  const openDetailModal = (update: GardenUpdate, e?: React.MouseEvent) => {
+  const openDetailModal = (update: GardenUpdate, e?: React.MouseEvent<HTMLElement>) => {
     // Prevent opening if clicking on action buttons
     if (e) {
       const target = e.target as HTMLElement
@@ -376,7 +739,8 @@ export default function Home() {
   }
 
   const shareSingle = (update: GardenUpdate) => {
-    const text = `*Garden Report*\n\n🌱 *Garden:* ${update.garden}\n🌿 *Plant:* ${update.type} (${update.plantId})\n📝 *Note:* ${update.desc}${update.media ? `\n\n${update.media}` : ''}`
+    const mediaText = update.media && update.media.length > 0 ? `\n\n${update.media.join('\n')}` : ''
+    const text = `*Garden Report*\n\n🌱 *Garden:* ${update.garden}\n🌿 *Plant:* ${update.type} (${update.plantId})\n📝 *Note:* ${update.desc}${mediaText}`
     shareToWhatsApp(text)
   }
 
@@ -400,13 +764,12 @@ export default function Home() {
     const selectedUpdates = updates.filter(u => u.id && selectedIds.has(u.id))
 
     try {
-      const jsPDFConstructor = window.jspdf?.jsPDF
-      if (!jsPDFConstructor) {
-        alert('PDF Library not loaded. Please refresh the page.')
-        return
-      }
+      const [{ jsPDF }, { default: autoTable }] = await Promise.all([
+        import('jspdf'),
+        import('jspdf-autotable'),
+      ])
 
-      const doc = new jsPDFConstructor()
+      const doc = new jsPDF()
 
       // Header
       doc.setFontSize(22)
@@ -428,7 +791,7 @@ export default function Home() {
       ])
 
       // Generate table
-      ;(doc as any).autoTable({
+      autoTable(doc, {
         head: [tableColumn],
         body: tableRows,
         startY: 35,
@@ -987,10 +1350,10 @@ export default function Home() {
                   <div className="mt-3 grid grid-cols-3 gap-2">
                     {mediaFiles.map((file, index) => (
                       <div key={index} className="relative group">
-                        {file.type?.startsWith('video') ? (
-                          <video src={file.data} controls className="w-full h-24 object-cover rounded-lg" />
+                        {file.type.startsWith('video') ? (
+                          <video src={getAttachmentPreviewSource(file)} controls className="w-full h-24 object-cover rounded-lg" />
                         ) : (
-                          <img src={file.data} alt={`Preview ${index + 1}`} className="w-full h-24 object-cover rounded-lg" />
+                          <img src={getAttachmentPreviewSource(file)} alt={`Preview ${index + 1}`} className="w-full h-24 object-cover rounded-lg" />
                         )}
                         <button
                           type="button"
@@ -1013,16 +1376,16 @@ export default function Home() {
               <div className="flex gap-4 pt-2">
                 <button
                   onClick={() => handleSubmit(true)}
-                  disabled={isSubmitting}
+                  disabled={isEditing && isSubmitting}
                   className="flex-1 py-4 border-none rounded-lg text-lg font-semibold text-white bg-green-700 hover:bg-green-800 hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 flex items-center justify-center gap-2"
                 >
-                  {isSubmitting ? (
+                  {isEditing && isSubmitting ? (
                     <>
                       <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                       </svg>
-                      {isEditing ? 'Updating...' : 'Saving...'}
+                      Updating...
                     </>
                   ) : (
                     <>{isEditing ? 'Update Report' : 'Done'}</>
@@ -1031,20 +1394,10 @@ export default function Home() {
                 {!isEditing && (
                   <button
                     onClick={() => handleSubmit(false)}
-                    disabled={isSubmitting}
+                    disabled={false}
                     className="flex-1 py-4 border-none rounded-lg text-lg font-semibold text-white bg-blue-700 hover:bg-blue-800 hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0 flex items-center justify-center gap-2"
                   >
-                    {isSubmitting ? (
-                      <>
-                        <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        Saving...
-                      </>
-                    ) : (
-                      <>Save & Next</>
-                    )}
+                    <>Save & Next</>
                   </button>
                 )}
               </div>
@@ -1156,26 +1509,43 @@ export default function Home() {
         </div>
       )}
 
-      {/* Load jsPDF */}
-      <Script />
+      {submissionJobs.length > 0 && (
+        <div className="fixed top-4 left-4 right-4 z-[420] space-y-2 md:top-auto md:bottom-4 md:left-auto md:right-4 md:w-[340px]">
+          {submissionJobs.map((job) => (
+            <button
+              key={job.id}
+              type="button"
+              onClick={() => {
+                if (job.status === 'error') {
+                  retrySubmissionJob(job.id)
+                  return
+                }
+
+                if (job.status === 'success') {
+                  dismissSubmissionJob(job.id)
+                }
+              }}
+              className={`flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left shadow-lg backdrop-blur transition-all ${
+                job.status === 'error'
+                  ? 'border-red-200 bg-white/95'
+                  : 'border-gray-200 bg-white/95'
+              }`}
+            >
+              {job.status === 'success' ? (
+                <CircleCheck className="h-5 w-5 shrink-0 text-green-600" />
+              ) : job.status === 'error' ? (
+                <CircleX className="h-5 w-5 shrink-0 text-red-600" />
+              ) : (
+                <LoaderCircle className="h-5 w-5 shrink-0 animate-spin text-blue-600" />
+              )}
+
+              <span className="min-w-0 truncate text-sm font-medium text-gray-900">
+                {job.plantName} • {describeJobStatus(job)}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
-}
-
-function Script() {
-  useEffect(() => {
-    // Load jsPDF from CDN
-    const script1 = document.createElement('script')
-    script1.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
-    script1.async = true
-
-    const script2 = document.createElement('script')
-    script2.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js'
-    script2.async = true
-
-    document.head.appendChild(script1)
-    document.head.appendChild(script2)
-  }, [])
-
-  return null
 }

@@ -41,11 +41,7 @@ export default function PlantsPage() {
 
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
-  useEffect(() => {
-    loadData()
-  }, [])
-
-  const loadData = async () => {
+  async function loadData() {
     setLoading(true)
     const [gardensData, plantTypesData, plantsData] = await Promise.all([
       getGardens(),
@@ -57,6 +53,33 @@ export default function PlantsPage() {
     setPlants(plantsData)
     setLoading(false)
   }
+
+  useEffect(() => {
+    let isCancelled = false
+
+    async function run() {
+      const [gardensData, plantTypesData, plantsData] = await Promise.all([
+        getGardens(),
+        getPlantTypes(),
+        getPlants(),
+      ])
+
+      if (isCancelled) {
+        return
+      }
+
+      setGardens(gardensData)
+      setPlantTypes(plantTypesData)
+      setPlants(plantsData)
+      setLoading(false)
+    }
+
+    void run()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [])
 
   const showNotification = (message: string, type: 'success' | 'error' = 'success') => {
     setNotification({ message, type })
