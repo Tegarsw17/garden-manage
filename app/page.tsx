@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { type GardenUpdate, type Garden, type Plant, type Condition, getGardens, getPlants, getPlantsByGarden, getUpdates, getConditions, createUpdate, updateUpdate, deleteUpdate, uploadMedia } from '@/lib/supabase'
-import { Share2, Edit, Trash2, Plus, X, Mic, Leaf, MoreVertical, LoaderCircle, CircleCheck, CircleX } from 'lucide-react'
+import { Share2, Edit, Trash2, Plus, X, Mic, Leaf, MoreVertical, LoaderCircle, CircleCheck, CircleX, Search } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 
@@ -232,6 +232,7 @@ export default function Home() {
   const [selectedUpdate, setSelectedUpdate] = useState<GardenUpdate | null>(null)
   const [conditions, setConditions] = useState<Condition[]>([])
   const [submissionJobs, setSubmissionJobs] = useState<SubmissionJob[]>([])
+  const [plantSearch, setPlantSearch] = useState('')
 
   // Form state
   const [formData, setFormData] = useState({
@@ -283,6 +284,10 @@ export default function Home() {
   useEffect(() => {
     activeGardenRef.current = activeGarden
   }, [activeGarden])
+
+  useEffect(() => {
+    setPlantSearch('')
+  }, [pathname])
 
   useEffect(() => {
     if (pathname === '/') {
@@ -510,6 +515,8 @@ export default function Home() {
 
   // Navigation
   const enterGarden = (garden: Garden) => {
+    setPlantSearch('')
+
     if (garden.id) {
       router.push(`/gardens/${garden.id}`)
     }
@@ -519,6 +526,7 @@ export default function Home() {
   }
 
   const switchGarden = () => {
+    setPlantSearch('')
     router.push('/')
     setActiveGarden(null)
     setView('dashboard')
@@ -1004,12 +1012,21 @@ export default function Home() {
     )
   }
 
+  const normalizedPlantSearch = plantSearch.trim().toLowerCase()
+  const visibleUpdates = normalizedPlantSearch
+    ? updates.filter((update) =>
+        [update.plantId, update.type].some((value) =>
+          value.toLowerCase().includes(normalizedPlantSearch)
+        )
+      )
+    : updates
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-100 pb-32">
       {/* Header */}
       <header className="sticky top-0 z-50 bg-green-700 text-white px-5 py-3 flex justify-between items-center h-[60px] shadow-lg">
         <h1 className="text-xl font-semibold flex-1 whitespace-nowrap overflow-hidden text-ellipsis">
-          {activeGarden?.name || 'GardenGuard Monitor'}
+          Garden Report
         </h1>
         <div className="flex gap-2">
           {!activeGarden && (
@@ -1080,137 +1097,174 @@ export default function Home() {
               <p className="text-gray-500">Tap + to start.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-5">
-              {updates.map(update => (
-                <div
-                  key={update.id}
-                  onClick={(e) => openDetailModal(update, e)}
-                  className={`bg-white rounded-2xl p-5 shadow-md relative border-l-4 transition-all cursor-pointer hover:shadow-lg ${isSelecting ? 'pl-8' : ''} ${selectedIds.has(update.id!) ? 'bg-green-50 border-l-green-700' : 'border-l-transparent'}`}
-                >
-                  {isSelecting && (
-                    <div
-                      className="absolute left-2 top-5 cursor-pointer"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        toggleSelection(update.id!)
-                      }}
+            <>
+              <div className="mb-5 bg-white rounded-xl shadow-sm border border-green-100 p-3">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <h2 className="text-xl font-bold text-green-800 md:min-w-0 md:flex-1">
+                    {activeGarden?.name}
+                  </h2>
+                  <div className="relative md:w-full md:max-w-md">
+                  <Search size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="search"
+                    value={plantSearch}
+                    onChange={(event) => setPlantSearch(event.target.value)}
+                    placeholder="Search plant..."
+                    className="w-full h-12 rounded-lg border border-gray-200 bg-gray-50 pl-11 pr-11 text-base text-gray-900 placeholder:text-gray-500 focus:outline-none focus:border-green-700 focus:ring-2 focus:ring-green-100"
+                  />
+                  {plantSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setPlantSearch('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-gray-500 hover:bg-gray-200 hover:text-gray-800 transition-colors"
+                      aria-label="Clear plant search"
                     >
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(update.id!)}
-                        onChange={() => toggleSelection(update.id!)}
-                        className="w-5 h-5 accent-green-700"
-                      />
-                    </div>
+                      <X size={18} />
+                    </button>
                   )}
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="flex-1">
-                      <div className="flex flex-wrap items-center gap-2 mb-2">
-                        <span className="inline-block bg-green-100 text-green-900 font-bold px-3 py-1.5 rounded-lg text-sm">
-                          {update.type}
-                        </span>
-                        {update.conditionIds && update.conditionIds.map(conditionId => {
-                          const condition = conditions.find(c => c.id === conditionId)
-                          return condition ? (
-                            <span
-                              key={condition.id}
-                              className="inline-block font-bold px-3 py-1.5 rounded-lg text-sm"
-                              style={{ backgroundColor: condition.color + '20', color: condition.color }}
-                            >
-                              {condition.icon}
-                              <span className="hidden md:inline">{condition.name}</span>
-                            </span>
-                          ) : null
-                        })}
-                      </div>
-                      <p className="text-sm text-gray-500">
-                        <strong>{update.garden}</strong> • {update.plantId}
-                      </p>
-                    </div>
-                    {/* Desktop: Show icons directly */}
-                    <div className="hidden md:flex gap-2" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        onClick={() => shareSingle(update)}
-                        className="p-1.5 opacity-60 hover:opacity-100 hover:scale-110 transition-all text-green-600"
-                        title="Share to WhatsApp"
-                      >
-                        <Share2 size={20} />
-                      </button>
-                      <button
-                        onClick={() => handleEdit(update)}
-                        className="p-1.5 opacity-60 hover:opacity-100 hover:scale-110 transition-all text-blue-600"
-                        title="Edit"
-                      >
-                        <Edit size={20} />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(update.id!)}
-                        className="p-1.5 opacity-60 hover:opacity-100 hover:scale-110 transition-all text-red-600"
-                        title="Delete"
-                      >
-                        <Trash2 size={20} />
-                      </button>
-                    </div>
-                    {/* Mobile: Hamburger menu */}
-                    <div className="md:hidden relative menu-container" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        onClick={() => setOpenMenuId(openMenuId === update.id ? null : update.id!)}
-                        className="p-1.5 text-gray-600 hover:text-gray-900 transition-all"
-                        title="More options"
-                      >
-                        <MoreVertical size={20} />
-                      </button>
-                      {openMenuId === update.id && (
-                        <div className="absolute right-0 top-8 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-10 min-w-[140px]">
-                          <button
-                            onClick={() => {
-                              shareSingle(update)
-                              setOpenMenuId(null)
-                            }}
-                            className="w-full px-4 py-2.5 text-left text-sm text-green-700 hover:bg-green-50 flex items-center gap-3 transition-colors"
-                          >
-                            <Share2 size={16} />
-                            Share
-                          </button>
-                          <button
-                            onClick={() => {
-                              handleEdit(update)
-                              setOpenMenuId(null)
-                            }}
-                            className="w-full px-4 py-2.5 text-left text-sm text-blue-700 hover:bg-blue-50 flex items-center gap-3 transition-colors"
-                          >
-                            <Edit size={16} />
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => {
-                              handleDelete(update.id!)
-                              setOpenMenuId(null)
-                            }}
-                            className="w-full px-4 py-2.5 text-left text-sm text-red-700 hover:bg-red-50 flex items-center gap-3 transition-colors"
-                          >
-                            <Trash2 size={16} />
-                            Delete
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <p className="text-gray-800 whitespace-pre-wrap mb-4">{truncateText(update.desc, 25)}</p>
-                  {update.media && (
-                    <div className="relative mb-4" onClick={(e) => openDetailModal(update, e)}>
-                      {renderMedia(update.media, update.mediaType)}
-                      <div className="absolute inset-0 bg-black/10 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center">
-                        <span className="bg-white/90 text-gray-800 px-3 py-1 rounded-full text-sm font-medium">Tap to view</span>
-                      </div>
-                    </div>
-                  )}
-                  <div className="text-xs text-gray-400 mt-3 pt-3 border-t border-gray-100">
-                    📅 {update.date}
                   </div>
                 </div>
-              ))}
-            </div>
+              </div>
+
+              {visibleUpdates.length === 0 ? (
+                <div className="text-center py-16 bg-white rounded-2xl shadow-md">
+                  <h3 className="text-lg text-gray-900 mb-2">No plants found</h3>
+                  <p className="text-gray-500">Try another plant name or type.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-5">
+                  {visibleUpdates.map(update => (
+                    <div
+                      key={update.id}
+                      onClick={(e) => openDetailModal(update, e)}
+                      className={`bg-white rounded-2xl p-5 shadow-md relative border-l-4 transition-all cursor-pointer hover:shadow-lg ${isSelecting ? 'pl-8' : ''} ${selectedIds.has(update.id!) ? 'bg-green-50 border-l-green-700' : 'border-l-transparent'}`}
+                    >
+                      {isSelecting && (
+                        <div
+                          className="absolute left-2 top-5 cursor-pointer"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            toggleSelection(update.id!)
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(update.id!)}
+                            onChange={() => toggleSelection(update.id!)}
+                            className="w-5 h-5 accent-green-700"
+                          />
+                        </div>
+                      )}
+                      <div className="flex justify-between items-start mb-4">
+                        <div className="flex-1">
+                          <div className="flex flex-wrap items-center gap-2 mb-2">
+                            <span className="inline-block bg-green-100 text-green-900 font-bold px-3 py-1.5 rounded-lg text-sm">
+                              {update.type}
+                            </span>
+                            {update.conditionIds && update.conditionIds.map(conditionId => {
+                              const condition = conditions.find(c => c.id === conditionId)
+                              return condition ? (
+                                <span
+                                  key={condition.id}
+                                  className="inline-block font-bold px-3 py-1.5 rounded-lg text-sm"
+                                  style={{ backgroundColor: condition.color + '20', color: condition.color }}
+                                >
+                                  {condition.icon}
+                                  <span className="hidden md:inline">{condition.name}</span>
+                                </span>
+                              ) : null
+                            })}
+                          </div>
+                          <p className="text-sm text-gray-500">
+                            <strong>{update.garden}</strong> • {update.plantId}
+                          </p>
+                        </div>
+                        {/* Desktop: Show icons directly */}
+                        <div className="hidden md:flex gap-2" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => shareSingle(update)}
+                            className="p-1.5 opacity-60 hover:opacity-100 hover:scale-110 transition-all text-green-600"
+                            title="Share to WhatsApp"
+                          >
+                            <Share2 size={20} />
+                          </button>
+                          <button
+                            onClick={() => handleEdit(update)}
+                            className="p-1.5 opacity-60 hover:opacity-100 hover:scale-110 transition-all text-blue-600"
+                            title="Edit"
+                          >
+                            <Edit size={20} />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(update.id!)}
+                            className="p-1.5 opacity-60 hover:opacity-100 hover:scale-110 transition-all text-red-600"
+                            title="Delete"
+                          >
+                            <Trash2 size={20} />
+                          </button>
+                        </div>
+                        {/* Mobile: Hamburger menu */}
+                        <div className="md:hidden relative menu-container" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            onClick={() => setOpenMenuId(openMenuId === update.id ? null : update.id!)}
+                            className="p-1.5 text-gray-600 hover:text-gray-900 transition-all"
+                            title="More options"
+                          >
+                            <MoreVertical size={20} />
+                          </button>
+                          {openMenuId === update.id && (
+                            <div className="absolute right-0 top-8 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-10 min-w-[140px]">
+                              <button
+                                onClick={() => {
+                                  shareSingle(update)
+                                  setOpenMenuId(null)
+                                }}
+                                className="w-full px-4 py-2.5 text-left text-sm text-green-700 hover:bg-green-50 flex items-center gap-3 transition-colors"
+                              >
+                                <Share2 size={16} />
+                                Share
+                              </button>
+                              <button
+                                onClick={() => {
+                                  handleEdit(update)
+                                  setOpenMenuId(null)
+                                }}
+                                className="w-full px-4 py-2.5 text-left text-sm text-blue-700 hover:bg-blue-50 flex items-center gap-3 transition-colors"
+                              >
+                                <Edit size={16} />
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => {
+                                  handleDelete(update.id!)
+                                  setOpenMenuId(null)
+                                }}
+                                className="w-full px-4 py-2.5 text-left text-sm text-red-700 hover:bg-red-50 flex items-center gap-3 transition-colors"
+                              >
+                                <Trash2 size={16} />
+                                Delete
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <p className="text-gray-800 whitespace-pre-wrap mb-4">{truncateText(update.desc, 25)}</p>
+                      {update.media && (
+                        <div className="relative mb-4" onClick={(e) => openDetailModal(update, e)}>
+                          {renderMedia(update.media, update.mediaType)}
+                          <div className="absolute inset-0 bg-black/10 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <span className="bg-white/90 text-gray-800 px-3 py-1 rounded-full text-sm font-medium">Tap to view</span>
+                          </div>
+                        </div>
+                      )}
+                      <div className="text-xs text-gray-400 mt-3 pt-3 border-t border-gray-100">
+                        📅 {update.date}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
