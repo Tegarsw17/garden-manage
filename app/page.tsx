@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { type GardenUpdate, type Garden, type Plant, type Condition, getGardens, getPlants, getPlantsByGarden, getUpdates, getConditions, createUpdate, updateUpdate, deleteUpdate, uploadMedia } from '@/lib/supabase'
 import { Share2, Edit, Trash2, Plus, X, Mic, Leaf, MoreVertical, LoaderCircle, CircleCheck, CircleX } from 'lucide-react'
 import Link from 'next/link'
+import { usePathname, useRouter } from 'next/navigation'
 
 declare global {
   interface Window {
@@ -210,6 +211,9 @@ async function loadGardenFeedData(garden: Garden): Promise<{
 }
 
 export default function Home() {
+  const pathname = usePathname()
+  const router = useRouter()
+
   // State
   const [view, setView] = useState<'dashboard' | 'feed'>('dashboard')
   const [gardens, setGardens] = useState<Garden[]>([])
@@ -279,6 +283,32 @@ export default function Home() {
   useEffect(() => {
     activeGardenRef.current = activeGarden
   }, [activeGarden])
+
+  useEffect(() => {
+    if (pathname === '/') {
+      setActiveGarden(null)
+      setView('dashboard')
+      setIsSelecting(false)
+      setSelectedIds(new Set())
+      return
+    }
+
+    const gardenId = Number(pathname.match(/^\/gardens\/(\d+)$/)?.[1])
+    if (!Number.isFinite(gardenId) || gardens.length === 0) {
+      return
+    }
+
+    const routeGarden = gardens.find((garden) => garden.id === gardenId)
+    if (!routeGarden) {
+      router.replace('/')
+      return
+    }
+
+    setActiveGarden(routeGarden)
+    setView('feed')
+    setIsSelecting(false)
+    setSelectedIds(new Set())
+  }, [gardens, pathname, router])
 
   // Load updates when active garden changes
   useEffect(() => {
@@ -480,11 +510,16 @@ export default function Home() {
 
   // Navigation
   const enterGarden = (garden: Garden) => {
+    if (garden.id) {
+      router.push(`/gardens/${garden.id}`)
+    }
+
     setActiveGarden(garden)
     setView('feed')
   }
 
   const switchGarden = () => {
+    router.push('/')
     setActiveGarden(null)
     setView('dashboard')
     setIsSelecting(false)
@@ -1219,7 +1254,7 @@ export default function Home() {
           className="fixed inset-0 bg-black/50 z-[310] flex items-end justify-center p-0 md:items-center md:p-4"
           onClick={(e) => e.target === e.currentTarget && closeModal()}
         >
-          <div className="bg-white w-full max-w-lg rounded-t-2xl md:rounded-2xl p-6 max-h-[90vh] overflow-y-auto">
+          <div className="bg-white text-gray-900 w-full max-w-lg rounded-t-2xl md:rounded-2xl p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6 pb-4 border-b">
               <h2 className="text-xl text-black font-semibold">{isEditing ? 'Edit Report' : 'New Report'}</h2>
               <button
@@ -1303,8 +1338,8 @@ export default function Home() {
                       key={condition.id}
                       className={`flex items-center gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all ${
                         (formData.conditionIds || []).includes(condition.id!)
-                          ? 'border-green-700 bg-green-50'
-                          : 'border-gray-200 hover:border-gray-300'
+                          ? 'border-green-700 bg-green-50 text-green-950'
+                          : 'border-gray-200 bg-white text-gray-900 hover:border-gray-300 hover:bg-gray-50'
                       }`}
                     >
                       <input
@@ -1313,7 +1348,7 @@ export default function Home() {
                         onChange={() => toggleCondition(condition.id!)}
                         className="w-5 h-5 accent-green-700"
                       />
-                      <span className="text-sm">
+                      <span className="text-sm font-semibold leading-snug">
                         {condition.icon} {condition.name}
                       </span>
                     </label>
