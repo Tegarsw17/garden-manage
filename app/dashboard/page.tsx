@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Calendar, Edit, Trash2, Share2, X } from 'lucide-react'
 import { type GardenUpdate, type Garden, type Plant, type Condition, getGardens, getPlants, getUpdates, getConditions, createUpdate, updateUpdate, deleteUpdate, uploadMediaArray } from '@/lib/supabase'
+import { compareNaturalStrings } from '@/lib/naturalSort'
 import Link from 'next/link'
 
 function formatDate(date: string | Date): string {
@@ -471,7 +472,7 @@ export default function DashboardPage() {
                 className="px-4 py-2 border border-gray-300 rounded-lg bg-white focus:outline-none focus:border-green-700 focus:ring-2 focus:ring-green-100"
               >
                 <option value="all">All Plants</option>
-                {Array.from(new Set(updates.map(u => u.plantId))).sort().map(plantId => (
+                {Array.from(new Set(updates.map(u => u.plantId))).sort(compareNaturalStrings).map(plantId => (
                   <option key={plantId} value={plantId}>{plantId}</option>
                 ))}
               </select>
@@ -767,7 +768,7 @@ export default function DashboardPage() {
                   required
                 >
                   <option value="">Select a plant</option>
-                  {plants.map(plant => (
+                  {plants.slice().sort((a, b) => compareNaturalStrings(a.plantName, b.plantName)).map(plant => (
                     <option key={plant.id} value={plant.id?.toString() || ''}>
                       {plant.plantName}
                     </option>

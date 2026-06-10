@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { type GardenUpdate, type Garden, type Plant, type Condition, getGardens, getPlants, getPlantsByGarden, getUpdates, getConditions, createUpdate, updateUpdate, deleteUpdate, uploadMedia } from '@/lib/supabase'
+import { compareNaturalStrings } from '@/lib/naturalSort'
 import { Share2, Edit, Trash2, Plus, X, Mic, Leaf, MoreVertical, LoaderCircle, CircleCheck, CircleX, Search } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
@@ -510,7 +511,9 @@ export default function Home() {
   // Get plants for selected type in current garden
   const getAvailablePlants = () => {
     if (!activeGarden || !formData.type) return []
-    return plants.filter(p => p.gardenId === activeGarden.id && p.plantTypeName === formData.type)
+    return plants
+      .filter(p => p.gardenId === activeGarden.id && p.plantTypeName === formData.type)
+      .sort((a, b) => compareNaturalStrings(a.plantName, b.plantName))
   }
 
   // Navigation
